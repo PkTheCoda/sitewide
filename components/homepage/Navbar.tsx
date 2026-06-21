@@ -1,6 +1,6 @@
 "use client";
 
-const COLS = 12;
+const COLS = 16;
 const ROWS = 1;
 
 import logo from "@/public/assets/sitewide-logo-v3.svg"
@@ -30,16 +30,16 @@ export default function Navbar() {
 
       <div
         aria-hidden
-        className="absolute inset-0 grid grid-cols-12 grid-rows-1 gap-px bg-slate-100 h-full"
+        className="absolute inset-0 grid grid-cols-16 grid-rows-1 gap-px bg-slate-100 h-full"
       >
         {Array.from({ length: COLS * ROWS }).map((_, i) => (
           <div key={i} className="bg-white border-b border-slate-100 rounded-md" />
         ))}
       </div>
 
-      <div className="relative grid grid-cols-12 grid-rows-1 gap-px h-full">
+      <div className="relative grid grid-cols-16 grid-rows-1 gap-px h-full">
 
-        <div className="w-full h-full bg-white rounded-md border-b border-slate-100 col-start-2 col-span-10 py-6 px-10 flex items-center justify-between">
+        <div className="w-full h-full bg-white rounded-md border-b border-slate-100 col-start-3 col-span-12 py-6 px-10 flex items-center justify-between">
             <div className="flex items-center gap-2">
                 <Image src={logo} alt="Sitewide Logo" className="size-8" />
                 <h3 className="three-title tracking-tighter font-medium">Site<span className="text-orange-600">wide</span></h3>
@@ -60,7 +60,7 @@ export default function Navbar() {
                     aria-label="Sign Up"
                 >
                     <h4 className="text-sm font-medium">
-                        Sign Up
+                        Book a Demo
                     </h4>
                     <IoIosArrowRoundForward className="size-6"/>
                 </Link>

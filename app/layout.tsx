@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Inter, Space_Mono } from "next/font/google";
 import "./globals.css";
 
+import Navbar from "@/components/homepage/Navbar"
+
 // Inter: variable font, used as --font-figtree
 const inter = Inter({
   variable: "--font-figtree",

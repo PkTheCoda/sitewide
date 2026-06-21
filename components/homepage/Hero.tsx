@@ -1,6 +1,6 @@
 "use client";
 
-const COLS = 12;
+const COLS = 16;
 const ROWS = 8;
 
 import { IoIosArrowRoundForward } from "react-icons/io";
@@ -16,7 +16,7 @@ export default function Hero() {
           This layer is purely visual and never changes. */}
       <div
         aria-hidden
-        className="absolute inset-0 grid grid-cols-12 grid-rows-8 gap-px bg-slate-100"
+        className="absolute inset-0 grid grid-cols-16 grid-rows-8 gap-px bg-slate-100"
       >
         {Array.from({ length: COLS * ROWS }).map((_, i) => (
           <div key={i} className="bg-slate-100">
@@ -31,10 +31,11 @@ export default function Hero() {
           col-start / col-span / row-start / row-span. Give each block a
           background (bg-slate-50) so it covers the lines it sits on top of.
           Leave an area empty and the lines show through. */}
-      <div className="relative grid grid-cols-12 grid-rows-8 gap-px min-h-screen">
+      <div className="relative grid grid-cols-16 grid-rows-8 gap-px min-h-screen">
+ 
 
         {/* Main Hero Box */}
-        <div className="flex flex-col gap-y-6 items-center justify-center col-start-3 col-span-8 row-start-2 row-span-5 bg-slate-100">
+        <div className="flex flex-col gap-y-6 items-center justify-center col-start-5 col-span-8 row-start-2 row-span-5 bg-slate-100">
           
             <div className="flex flex-col gap-y-6 items-center justify-center bg-white w-full h-full rounded-md">
                 <div className="flex items-center gap-2 bg-slate-50 bg-opacity-90 rounded-full p-1 pr-3 text-slate-900 font-medium w-fit">
@@ -85,41 +86,70 @@ export default function Hero() {
 
         {/* row 2, col 2 size 1 */}
         <div className="row-start-2 row-span-1 col-start-2 col-span-1 bg-slate-100 p-px">
-            <div className="w-full h-full rounded-md bg-slate-50"></div>
+            <div className="w-full h-full rounded-md relative bg-slate-50">
+                <h3 className="font-robot text-xs text-slate-300 absolute bottom-2 left-2">
+                    CRO <br />
+                    SEO <br />
+
+                </h3>
+            </div>
         </div>
    
 
         {/* row 8, col 6, size 4 */}
         <div className="row-start-1 row-span-1 col-start-4 col-span-4 bg-slate-100 p-px">
-            <div className="bg-slate-50 w-full h-full rounded-md">
-
+            <div className="relative bg-slate-50 w-full h-full rounded-md">
+                <h3 className="font-robot text-xs text-slate-300 absolute top-2 left-2 text-left">
+                    A/B TESTING <br />
+                    SPLIT TESTING <br />
+                </h3>
             </div>
         </div>
 
         {/* row 5, col 1, size 4 */}
         <div className="row-start-5 row-span-4 col-start-1 col-span-1 bg-slate-100 p-px">
-            <div className="bg-slate-50 w-full h-full rounded-md">
-
+            <div className="relative bg-slate-50 w-full h-full rounded-md">
+                <h3 className="font-robot text-xs text-slate-300 absolute left-2 bottom-2 text-left">
+                    SPLIT TESTING
+                </h3>
             </div>
         </div>
 
         {/* row 2, col 11, size 2 */}
-        <div className="row-start-2 row-span-1 col-start-11 col-span-2 bg-slate-100 p-px">
-            <div className="bg-slate-50 w-full h-full rounded-md">
-
+        <div className="row-start-2 row-span-1 col-start-14 col-span-2 bg-slate-100 p-px">
+            <div className="relative bg-slate-50 w-full h-full rounded-md">
+                <h3 className="font-robot text-xs text-slate-300 absolute top-2 right-2 uppercase text-right">
+                    FOUNDERS <br />
+                    SAAS COMPANIES <br />
+                    GROWTH TEAMS <br />
+                    E-COMMERCE <br />
+                </h3>
             </div>
         </div>
 
         {/* row 4, col 12, size 3 */}
-        <div className="row-start-4 row-span-3 col-start-12 col-span-1 bg-slate-100 p-px">
-            <div className="bg-slate-50 w-full h-full rounded-md">
+        <div className="row-start-4 row-span-3 col-start-14 col-span-1 bg-slate-100 p-px">
+            <div className="relative bg-slate-50 w-full h-full rounded-md">
+                <h3 className="font-robot text-xs text-slate-300 absolute bottom-2 left-2 text-left">
+                    GA4 <br />
+                    POSTHOG
+                </h3>
+            </div>
+        </div>
 
+        <div className="row-start-7 row-span-2 col-start-16 col-span-1 bg-slate-100 p-px">
+            <div className="relative bg-slate-50 w-full h-full rounded-md">
+                <h3 className="font-robot text-xs text-slate-300 absolute top-2 right-2 uppercase text-right">
+                    Landing <br />
+                    Auth Flow <br />
+                    Content 
+                </h3>
             </div>
         </div>
 
         {/* row 8, col 6, size 4 */}
-        <div className="row-start-8 row-span-1 col-start-6 col-span-4 bg-slate-100 p-px">
-            <div className="bg-slate-50 w-full h-full rounded-md">
+        <div className="row-start-8 row-span-1 col-start-10 col-span-4 bg-slate-100 p-px">
+            <div className="relative bg-slate-50 w-full h-full rounded-md">
 
             </div>
         </div>

@@ -3,6 +3,7 @@
 /* inter actually fix this later*/
 @theme inline {
   --font-sans: var(--font-figtree);
+  --font-robot: var(--font-robot);
 }
 
 body {
