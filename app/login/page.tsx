@@ -1,17 +1,22 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { SiGoogle } from "react-icons/si";
 import Image from "next/image";
-
-import logo from "@/public/assets/sitewide-logo-v3.svg"
+import logo from "@/public/assets/sitewide-logo-v3.svg";
 
 const COLS = 12;
 const ROWS = 5;
 
-export default function LoginPage() {
+type Tab = "login" | "signup";
+
+export default function AuthPage() {
+  const [tab, setTab] = useState<Tab>("login");
+  const isLogin = tab === "login";
+
   return (
-    <section className="relative min-h-screen w-full bg-slate-50">
+    <section className="relative h-screen w-full bg-slate-50">
       <div
         aria-hidden
         className="absolute inset-0 grid grid-cols-12 grid-rows-5 gap-px bg-slate-100"
@@ -23,7 +28,7 @@ export default function LoginPage() {
         ))}
       </div>
 
-      <div className="relative grid grid-cols-12 grid-rows-5 gap-px min-h-screen">
+      <div className="relative grid grid-cols-12 grid-rows-5 gap-px h-screen">
 
         {/* Main auth card */}
         <div className="col-start-5 col-span-4 row-start-2 row-span-4 bg-slate-100 p-px">
@@ -32,20 +37,33 @@ export default function LoginPage() {
             {/* Logo */}
             <div className="flex items-center gap-2.5">
               <Image src={logo} alt="Sitewide Logo" className="size-10" />
-              <span className="five-title font-medium tracking-tight">Site<span className="text-orange-600">wide</span></span>
+              <span className="five-title font-medium tracking-tight">
+                Site<span className="text-orange-600">wide</span>
+              </span>
             </div>
 
             {/* Pill toggle */}
             <div className="flex items-center bg-slate-100 rounded-full p-1 w-full">
-              <span className="flex-1 text-center py-1.5 text-sm font-medium text-slate-900 bg-white rounded-full shadow-sm select-none">
+              <button
+                onClick={() => setTab("login")}
+                className={`flex-1 text-center py-1.5 text-sm font-medium rounded-full transition-all ${
+                  isLogin
+                    ? "text-slate-900 bg-white shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
                 Log In
-              </span>
-              <Link
-                href="/signup"
-                className="flex-1 text-center py-1.5 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors"
+              </button>
+              <button
+                onClick={() => setTab("signup")}
+                className={`flex-1 text-center py-1.5 text-sm font-medium rounded-full transition-all ${
+                  !isLogin
+                    ? "text-slate-900 bg-white shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                }`}
               >
                 Sign Up
-              </Link>
+              </button>
             </div>
 
             {/* Form */}
@@ -70,18 +88,20 @@ export default function LoginPage() {
                 type="submit"
                 className="w-full bg-orange-600 hover:bg-orange-700 text-white font-medium py-2.5 rounded-full transition-colors mt-1"
               >
-                Log In
+                {isLogin ? "Log In" : "Create Account"}
               </button>
-              {/* Google OAuth */}
-                <button className="w-full flex items-center justify-center gap-2.5 bg-black hover:bg-neutral-900 text-white font-medium py-2.5 rounded-full transition-colors text-sm">
+              <button
+                type="button"
+                className="w-full flex items-center justify-center gap-2.5 bg-black hover:bg-neutral-900 text-white font-medium py-2.5 rounded-full transition-colors text-sm"
+              >
                 <SiGoogle className="size-4" />
-                Continue with Google
-                </button>
+                {isLogin ? "Continue with Google" : "Sign Up with Google"}
+              </button>
             </form>
 
             {/* Footer */}
             <p className="text-xs text-slate-400 text-center leading-relaxed">
-              By logging in, you agree to our{" "} <br />
+              {isLogin ? "By logging in" : "By signing up"}, you agree to our{" "}<br />
               <Link href="#" className="underline hover:text-slate-600 transition-colors">
                 Terms of Service
               </Link>{" "}
