@@ -12,9 +12,9 @@ import Navbar from "@/components/homepage/Navbar"
 
 export default function Homepage() {
   return (
-    <>
+    <div className="relative">
       <Navbar />
       <Hero />
-    </>
+    </div>
   );
 }

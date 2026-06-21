@@ -26,7 +26,7 @@ export default function Navbar() {
     ]
 
   return (
-    <nav className="relative w-full bg-slate-50 h-24">
+    <nav className="sticky top-0 left-0 right-0 z-50 w-full bg-slate-50 h-24">
 
       <div
         aria-hidden
