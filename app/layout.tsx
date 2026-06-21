@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { Figtree } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
-const figtree = Figtree({
+const inter = Inter({
   variable: "--font-figtree",
   subsets: ["latin"],
 });
@@ -20,7 +20,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${figtree.variable} h-full font-sans antialiased`}
+      className={`${inter.variable} h-full font-sans antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
