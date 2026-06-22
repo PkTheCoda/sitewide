@@ -12,7 +12,7 @@ const ROWS = 5;
 type Tab = "login" | "signup";
 
 export default function AuthPage() {
-  const [tab, setTab] = useState<Tab>("login");
+  const [tab, setTab] = useState<Tab>("signup");
   const isLogin = tab === "login";
 
   return (
@@ -31,8 +31,8 @@ export default function AuthPage() {
       <div className="relative grid grid-cols-12 grid-rows-5 gap-px h-screen">
 
         {/* Main auth card */}
-        <div className="col-start-5 col-span-4 row-start-2 row-span-4 bg-slate-100 p-px">
-          <div className="bg-white w-full h-full rounded-md flex flex-col items-center justify-center p-10 px-12 gap-y-8">
+        <div className="col-start-2 sm:col-start-4 lg:col-start-5 col-span-10 sm:col-span-6 lg:col-span-4 row-start-1 sm:row-start-2 row-span-5 sm:row-span-4 bg-slate-100 p-px">
+          <div className="bg-white w-full h-full rounded-md flex flex-col items-center justify-center p-6 lg:p-10 gap-y-8">
 
             {/* Logo */}
             <div className="flex items-center gap-2.5">

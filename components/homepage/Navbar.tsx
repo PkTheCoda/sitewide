@@ -47,7 +47,7 @@ export default function Navbar() {
 
             <div className="flex items-center gap-4">
                 {navLinks.map((link) => (
-                    <Link href={link.href} key={link.label} className="text-lg tracking-tight hover:text-orange-600 transition-colors duration-300">
+                    <Link href={link.href} key={link.label} className="text-md tracking-tight hover:text-orange-600 transition-colors duration-300">
                         {link.label}
                     </Link>
                 ))}
