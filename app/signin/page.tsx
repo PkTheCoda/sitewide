@@ -6,7 +6,7 @@ import { SiGoogle } from "react-icons/si";
 import Image from "next/image";
 import logo from "@/public/assets/sitewide-logo-v3.svg";
 
-import { createNewUser } from "@/services/auth";
+import { createNewUser, signInWithEmail } from "@/services/auth";
 
 const COLS = 12;
 const ROWS = 5;
@@ -20,7 +20,7 @@ export default function AuthPage() {
   const [tab, setTab] = useState<Tab>("signup");
   const isLogin = tab === "login";
   const router = useRouter();
-  
+
   const [authData, setAuthData] = useState<NewUserData>({
     username: "",
     email: "",
@@ -41,7 +41,7 @@ export default function AuthPage() {
     // TODO: if error, data shouldn't reset + show error message
     e.preventDefault();
     if (isLogin) {
-      console.log("nothing yet")
+      signInWithEmail(authData);
     } else {
       createNewUser(authData); 
       setAuthData({
@@ -49,8 +49,8 @@ export default function AuthPage() {
         email: "",
         password: "",
       })
-      router.push("/");
     }
+    router.push("/dashboard")
     console.log(authData)
   }
 
