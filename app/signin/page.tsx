@@ -6,15 +6,20 @@ import { SiGoogle } from "react-icons/si";
 import Image from "next/image";
 import logo from "@/public/assets/sitewide-logo-v3.svg";
 
-import { createNewUser, signInWithEmail } from "@/services/auth";
+import { createNewUser, signInWithEmail, NewUserData } from "@/services/auth";
+import { useRouter } from "next/navigation";
 
 const COLS = 12;
 const ROWS = 5;
 
 type Tab = "login" | "signup";
 
-import { NewUserData } from "@/services/auth";
-import { useRouter } from "next/navigation";
+type FormErrors = {
+  username?: string;
+  email?: string;
+  password?: string;
+  form?: string; // top-level error from the backend (e.g. wrong password, email taken)
+};
 
 export default function AuthPage() {
   const [tab, setTab] = useState<Tab>("signup");
@@ -25,33 +30,80 @@ export default function AuthPage() {
     username: "",
     email: "",
     password: "",
-  })
+  });
 
-  function handleAuthInput(e: React.ChangeEvent<HTMLInputElement>) {
-    const {name, value} = e.target;
-    setAuthData({
-      ...authData,
-      [name]: value,
-    })
+  const [errors, setErrors] = useState<FormErrors>({});
 
-    console.log(authData)
+  // Validate fields client-side before hitting the backend
+  function validate(): FormErrors {
+    const errs: FormErrors = {};
+
+    if (!isLogin && !authData.username?.trim()) {
+      errs.username = "Username is required.";
+    }
+
+    if (!authData.email.trim()) {
+      errs.email = "Email is required.";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(authData.email)) {
+      errs.email = "Enter a valid email address.";
+    }
+
+    if (!authData.password) {
+      errs.password = "Password is required.";
+    } else if (authData.password.length < 6) {
+      errs.password = "Password must be at least 6 characters.";
+    }
+
+    return errs;
   }
 
-  function handleAuthSubmit(e: React.MouseEvent<HTMLButtonElement>) {
-    // TODO: if error, data shouldn't reset + show error message
-    e.preventDefault();
-    if (isLogin) {
-      signInWithEmail(authData);
-    } else {
-      createNewUser(authData); 
-      setAuthData({
-        username: "",
-        email: "",
-        password: "",
-      })
+  function handleAuthInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const { name, value } = e.target;
+    setAuthData(prev => ({ ...prev, [name]: value }));
+    // Clear the specific field error as the user types so they get instant feedback
+    if (errors[name as keyof FormErrors]) {
+      setErrors(prev => ({ ...prev, [name]: undefined, form: undefined }));
     }
-    router.push("/dashboard")
-    console.log(authData)
+  }
+
+  // Clear errors when switching tabs so stale messages don't carry over
+  function handleTabChange(newTab: Tab) {
+    setTab(newTab);
+    setErrors({});
+  }
+
+  async function handleAuthSubmit(e: React.MouseEvent<HTMLButtonElement>) {
+    e.preventDefault();
+
+    const validationErrors = validate();
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
+      return;
+    }
+
+    setErrors({});
+
+    if (isLogin) {
+      const { error } = await signInWithEmail(authData);
+      if (error) {
+        setErrors({ form: "Incorrect email or password." });
+        return;
+      }
+    } else {
+      const { error } = await createNewUser(authData);
+      if (error) {
+        // Supabase returns "User already registered" for duplicate emails
+        if (error.message.toLowerCase().includes("already registered")) {
+          setErrors({ email: "An account with this email already exists." });
+        } else {
+          setErrors({ form: "Something went wrong. Please try again." });
+        }
+        return;
+      }
+      setAuthData({ username: "", email: "", password: "" });
+    }
+
+    router.push("/dashboard");
   }
 
   return (
@@ -84,7 +136,7 @@ export default function AuthPage() {
             {/* Pill toggle */}
             <div className="flex items-center bg-slate-100 rounded-full p-1 w-full">
               <button
-                onClick={() => setTab("login")}
+                onClick={() => handleTabChange("login")}
                 className={`flex-1 text-center py-1.5 text-sm font-medium rounded-full transition-all ${
                   isLogin
                     ? "text-slate-900 bg-white shadow-sm"
@@ -94,7 +146,7 @@ export default function AuthPage() {
                 Log In
               </button>
               <button
-                onClick={() => setTab("signup")}
+                onClick={() => handleTabChange("signup")}
                 className={`flex-1 text-center py-1.5 text-sm font-medium rounded-full transition-all ${
                   !isLogin
                     ? "text-slate-900 bg-white shadow-sm"
@@ -104,6 +156,13 @@ export default function AuthPage() {
                 Sign Up
               </button>
             </div>
+
+            {/* Form-level error (backend errors not tied to a specific field) */}
+            {errors.form && (
+              <p className="text-xs text-red-500 text-center w-full -mb-4">
+                {errors.form}
+              </p>
+            )}
 
             {/* Form */}
             <form className="w-full flex flex-col gap-4" onSubmit={(e) => e.preventDefault()}>
@@ -116,22 +175,32 @@ export default function AuthPage() {
                       <input
                         type="text"
                         placeholder="John Doe"
-                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-orange-400/30 focus:border-orange-400 placeholder-slate-400 bg-white transition"
+                        className={`w-full border rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-orange-400/30 focus:border-orange-400 placeholder-slate-400 bg-white transition ${
+                          errors.username ? "border-red-400" : "border-slate-200"
+                        }`}
                         name="username"
                         onChange={handleAuthInput}
                         value={authData.username}
                       />
+                      {errors.username && (
+                        <p className="text-xs text-red-500">{errors.username}</p>
+                      )}
                     </div>
                     <div className="flex flex-col gap-1.5 flex-1">
                       <label className="text-sm font-medium text-slate-800">Email</label>
                       <input
                         type="email"
                         placeholder="name@example.com"
-                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-orange-400/30 focus:border-orange-400 placeholder-slate-400 bg-white transition"
+                        className={`w-full border rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-orange-400/30 focus:border-orange-400 placeholder-slate-400 bg-white transition ${
+                          errors.email ? "border-red-400" : "border-slate-200"
+                        }`}
                         name="email"
                         onChange={handleAuthInput}
                         value={authData.email}
                       />
+                      {errors.email && (
+                        <p className="text-xs text-red-500">{errors.email}</p>
+                      )}
                     </div>
                   </>
                 )}
@@ -141,26 +210,35 @@ export default function AuthPage() {
                     <input
                       type="email"
                       placeholder="name@example.com"
-                      className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-orange-400/30 focus:border-orange-400 placeholder-slate-400 bg-white transition"
+                      className={`w-full border rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-orange-400/30 focus:border-orange-400 placeholder-slate-400 bg-white transition ${
+                        errors.email ? "border-red-400" : "border-slate-200"
+                      }`}
                       name="email"
                       onChange={handleAuthInput}
                       value={authData.email}
                     />
+                    {errors.email && (
+                      <p className="text-xs text-red-500">{errors.email}</p>
+                    )}
                   </div>
                 )}
               </div>
-      
 
               <div className="flex flex-col gap-1.5">
                 <label className="text-sm font-medium text-slate-800">Password</label>
                 <input
                   type="password"
                   placeholder="••••••••"
-                  className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-orange-400/30 focus:border-orange-400 placeholder-slate-400 bg-white transition"
+                  className={`w-full border rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-orange-400/30 focus:border-orange-400 placeholder-slate-400 bg-white transition ${
+                    errors.password ? "border-red-400" : "border-slate-200"
+                  }`}
                   name="password"
                   onChange={handleAuthInput}
                   value={authData.password}
                 />
+                {errors.password && (
+                  <p className="text-xs text-red-500">{errors.password}</p>
+                )}
               </div>
 
               <button
@@ -181,7 +259,6 @@ export default function AuthPage() {
 
             {/* Footer */}
             <p className="text-xs text-slate-400 text-center leading-relaxed">
-              {/* {isLogin ? "By logging in" : "By signing up"}, you agree to our{" "}<br /> */}
               <Link href="#" className="underline hover:text-slate-600 transition-colors">
                 Terms of Service
               </Link>{" "}

@@ -7,27 +7,17 @@ export interface NewUserData {
 }
 
 export async function createNewUser({email, password, username}: NewUserData) {
-    const {data, error} = await supabase.auth.signUp({
-        email: email,
-        password: password,
-        options: {
-            data: {
-                username: username
-            }
-        }
+    const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { username } },
     })
-
-    console.log(error)
     console.log(data)
+    console.log(error)
+    return { data, error };
 }
 
 export async function signInWithEmail({email, password}: NewUserData) {
-    
-    const { data, error } = await supabase.auth.signInWithPassword({
-        email: email,
-        password: password,
-    })
-
-    console.log(data)
-    console.log(error)
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    return { data, error };
 }
