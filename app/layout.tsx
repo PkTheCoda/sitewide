@@ -3,6 +3,7 @@ import { Inter, Space_Mono } from "next/font/google";
 import "./globals.css";
 
 import Navbar from "@/components/homepage/Navbar"
+import { AuthProvider } from "@/services/context/authContext"
 
 // Inter: variable font, used as --font-figtree
 const inter = Inter({
@@ -28,11 +29,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${inter.variable} ${spaceMono.variable} h-full font-sans antialiased`}
-    >
-      <body className="min-h-full flex flex-col">{children}</body>
-    </html>
+    <AuthProvider>
+      <html
+        lang="en"
+        className={`${inter.variable} ${spaceMono.variable} h-full font-sans antialiased`}
+      >
+        <body className="min-h-full flex flex-col">{children}</body>
+      </html>
+    </AuthProvider>
   );
 }
