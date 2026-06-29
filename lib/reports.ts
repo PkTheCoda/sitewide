@@ -1,5 +1,17 @@
 import { supabase } from "@/lib/supabaseClient";
 
+// get a single report by id
+export async function getReport(report_id: string) {
+    const { data, error } = await supabase.from('reports').select('*').eq('id', report_id).single();
+
+    if (error) {
+        console.error(error);
+        return { error: error.message };
+    }
+
+    return data;
+}
+
 // get all reports from a specific user
 export async function getReports(user_id: string) {
     const { data, error } = await supabase.from('reports').select('*').eq('user_id', user_id);
