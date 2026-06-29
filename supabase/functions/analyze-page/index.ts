@@ -4,18 +4,18 @@ import { createClient } from "@supabase/supabase-js";
 const BROWSERLESS_URL = "https://chrome.browserless.io";
 const VIEWPORT = { width: 1440, height: 900 };
 
-// This string is sent to Browserless and executed inside a real Chrome instance.
-// It runs in Node.js (Puppeteer), NOT in Deno — that's why it's a string, not
-// regular code. Chrome knows exactly where every element is because it just rendered them.
-const BROWSER_SCRIPT = `
+// Runs inside Browserless's Chrome via the /function endpoint.
+// Does element extraction only — screenshot is handled separately via /screenshot
+// so we never have to deal with binary encoding in a sandboxed environment.
+const EXTRACT_SCRIPT = `
 export default async function({ page, context }) {
   const { url } = context;
 
   await page.setViewport({ width: 1440, height: 900 });
-  await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
+  await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
-  // Scroll through the full page to trigger lazy-loaded images/content,
-  // then return to top so our screenshot starts from the beginning.
+  // Scroll through the full page to trigger lazy-loaded content,
+  // then return to top so element positions are measured from the top.
   await page.evaluate(async () => {
     await new Promise((resolve) => {
       let total = 0;
@@ -32,14 +32,6 @@ export default async function({ page, context }) {
   });
 
   const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight);
-
-  // encoding: 'base64' returns a plain string instead of a Buffer,
-  // which is safe to embed in our JSON response.
-  const screenshot = await page.screenshot({
-    fullPage: true,
-    type: 'webp',
-    encoding: 'base64',
-  });
 
   const elements = await page.evaluate(() => {
     const selectors = [
@@ -60,25 +52,21 @@ export default async function({ page, context }) {
         const text = el.innerText?.trim();
         const alt = el.alt?.trim();
 
-        // Skip tiny, empty, and floating elements
         if (rect.width < 50 || rect.height < 20) return;
         if (!text && !alt) return;
         if (style.position === 'fixed' || style.position === 'sticky') return;
 
-        // Absolute position on the full page (not just the viewport)
         const top  = Math.round(rect.top  + window.scrollY);
         const left = Math.round(rect.left + window.scrollX);
-
-        // Deduplicate elements that matched multiple selectors
-        const key = top + '-' + left;
+        const key  = top + '-' + left;
         if (seen.has(key)) return;
         seen.add(key);
 
         results.push({
           id:        nextId++,
           tag:       el.tagName.toLowerCase(),
-          text:      text  ? text.slice(0, 120)                   : null,
-          alt:       alt   || null,
+          text:      text ? text.slice(0, 120) : null,
+          alt:       alt  || null,
           className: (el.className || '').toString().slice(0, 80),
           elId:      el.id || '',
           top, left,
@@ -94,7 +82,7 @@ export default async function({ page, context }) {
   const pageText = await page.evaluate(() => document.body.innerText?.slice(0, 3000) || '');
 
   return {
-    data: { screenshot, elements, pageHeight, pageText },
+    data: { elements, pageHeight, pageText },
     type: 'application/json',
   };
 }
@@ -142,7 +130,7 @@ function getSectionForElement(el: any, sections: Record<string, Section>): strin
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
-  const { url, report_id } = await req.json();
+  const { url, user_id, report_id: incoming_report_id } = await req.json();
 
   const browserlessKey = Deno.env.get('BROWSERLESS_API_KEY')!;
   const anthropicKey   = Deno.env.get('ANTHROPIC_API_KEY')!;
@@ -151,35 +139,69 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, supabaseKey);
 
+  let report_id = incoming_report_id;
+
   try {
     if (report_id) {
+      // Called from the API route — report row already exists, just update status
       await supabase.from('reports').update({ status: 'processing' }).eq('id', report_id);
+    } else if (user_id) {
+      // Called directly (e.g. testing) — create the report row ourselves
+      const { data, error } = await supabase
+        .from('reports')
+        .insert({ url, user_id, status: 'processing' })
+        .select('id')
+        .single();
+      if (error) throw new Error(`Failed to create report: ${error.message}`);
+      report_id = data.id;
+      console.log('Created report:', report_id);
     }
 
-    // ── Step 1: Run the browser script on Browserless ──────────────────────
-    // We send our BROWSER_SCRIPT string to chrome.browserless.io/function.
-    // Browserless spins up a real Chrome instance, runs our code inside it,
-    // and returns whatever our function returns — in this case, screenshot +
-    // element positions + page text.
+    // ── Step 1: Screenshot + element extraction in parallel ───────────────
+    // Two separate Browserless calls, each in its own Chrome instance.
+    // Running them in parallel saves ~15-30 seconds vs sequential.
+    //
+    // /screenshot returns raw image bytes — no encoding issues.
+    // /function runs our EXTRACT_SCRIPT — returns plain JSON.
+    // scrollPage: true on /screenshot mirrors our manual autoScroll in the
+    // extract script, so lazy-loaded content appears in both.
 
-    const browserRes = await fetch(
-      `${BROWSERLESS_URL}/function?token=${browserlessKey}`,
-      {
+    const [screenshotRes, extractRes] = await Promise.all([
+      fetch(`${BROWSERLESS_URL}/screenshot?token=${browserlessKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: BROWSER_SCRIPT, context: { url } }),
-      }
-    );
+        body: JSON.stringify({
+          url,
+          options: { fullPage: true, type: 'webp' },
+          viewport: VIEWPORT,
+          scrollPage: true,
+        }),
+      }),
+      fetch(`${BROWSERLESS_URL}/function?token=${browserlessKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: EXTRACT_SCRIPT, context: { url } }),
+      }),
+    ]);
 
-    if (!browserRes.ok) {
-      throw new Error(`Browserless error ${browserRes.status}: ${await browserRes.text()}`);
+    if (!screenshotRes.ok) {
+      throw new Error(`Browserless screenshot error ${screenshotRes.status}: ${await screenshotRes.text()}`);
+    }
+    if (!extractRes.ok) {
+      throw new Error(`Browserless extract error ${extractRes.status}: ${await extractRes.text()}`);
     }
 
-    const { screenshot, elements, pageHeight, pageText } = await browserRes.json();
+    const extractRaw = await extractRes.json();
+    console.log('Extract raw response:', JSON.stringify(extractRaw).slice(0, 300));
+
+    // Browserless may return { data: { elements, ... } } or { elements, ... } directly
+    const extractData = extractRaw.elements ? extractRaw : (extractRaw.data ?? extractRaw);
+    const { elements, pageHeight, pageText } = extractData;
+    console.log('Elements extracted:', elements?.length, '| pageHeight:', pageHeight);
 
     // ── Step 2: Upload screenshot to Supabase Storage ──────────────────────
-    // Convert the base64 string back to raw bytes for upload.
-    const screenshotBytes = Uint8Array.from(atob(screenshot), c => c.charCodeAt(0));
+    // screenshotRes.arrayBuffer() gives us raw bytes — no base64 dance needed.
+    const screenshotBytes = new Uint8Array(await screenshotRes.arrayBuffer());
     const storagePath = `${report_id ?? 'test'}/${Date.now()}.webp`;
 
     const { error: uploadError } = await supabase.storage
@@ -207,24 +229,12 @@ Deno.serve(async (req) => {
       position: `${Math.round((el.top / pageHeight) * 100)}% from top`,
     }));
 
-    // ── Step 4: Claude analysis ────────────────────────────────────────────
-    // Claude gets the readable page text + the element map with positions.
-    // It returns structured JSON with comments referencing elements by id.
-    // We use Haiku because it's cheap and plenty capable for structured output.
+    // ── Step 4: Gemini analysis ────────────────────────────────────────────
+    // Gemini gets the readable page text + the element map with positions.
+    // responseMimeType: 'application/json' tells Gemini to return pure JSON —
+    // no markdown code fences to strip, no parsing surprises.
 
-    const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type':    'application/json',
-        'x-api-key':       anthropicKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model:      'claude-haiku-4-5-20251001',
-        max_tokens: 2000,
-        messages: [{
-          role: 'user',
-          content: `You are a CRO expert analyzing a landing page for conversion effectiveness.
+    const prompt = `You are a CRO expert analyzing a landing page for conversion effectiveness.
 
 PAGE TEXT:
 ${pageText}
@@ -252,8 +262,19 @@ Return ONLY valid JSON, no markdown wrapping:
   ]
 }
 
-Rules: max 8 comments, at least 1 positive, reference elements by id only.`,
-        }],
+Rules: max 15 comments, at least 1 positive, reference elements by id only.`;
+
+    const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type':      'application/json',
+        'x-api-key':         anthropicKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model:      'claude-haiku-4-5-20251001',
+        max_tokens: 2000,
+        messages:   [{ role: 'user', content: prompt }],
       }),
     });
 
@@ -261,11 +282,15 @@ Rules: max 8 comments, at least 1 positive, reference elements by id only.`,
       throw new Error(`Claude error ${claudeRes.status}: ${await claudeRes.text()}`);
     }
 
-    const claudeData  = await claudeRes.json();
-    const analysis    = JSON.parse(claudeData.content[0].text);
+    const claudeData = await claudeRes.json();
+    let rawText = claudeData.content[0].text.trim();
+    if (rawText.startsWith('```')) {
+      rawText = rawText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+    }
+    const analysis = JSON.parse(rawText);
 
     // ── Step 5: Resolve element_id → real pixel coordinates ───────────────
-    // Claude said "element 12 has a weak CTA". We look up element 12 in our
+    // The model returns "element 12 has a weak CTA". We look up element 12 in our
     // map and convert its Chrome-measured pixel positions to percentages so
     // the overlay works at any screen size.
 
@@ -277,7 +302,7 @@ Rules: max 8 comments, at least 1 positive, reference elements by id only.`,
         const el = elementMap[comment.element_id];
         if (!el) return null;
 
-        // Confidence drops slightly if Claude guessed the wrong tag for the element
+        // Confidence drops slightly if the model guessed the wrong tag for the element
         const confidence = comment.element_tag === el.tag ? 1.0 : 0.7;
 
         return {
@@ -309,9 +334,27 @@ Rules: max 8 comments, at least 1 positive, reference elements by id only.`,
         .eq('id', report_id);
 
       if (resolvedComments.length > 0) {
-        await supabase
+        const { error: commentsError } = await supabase
           .from('comments')
-          .insert(resolvedComments.map((c: any) => ({ ...c, report_id })));
+          .insert(resolvedComments.map((c: any) => ({
+            report_id,
+            element_id:  c.element_id,
+            element_tag: c.element_tag,
+            section:     c.section,
+            dimension:   c.dimension,
+            severity:    c.severity,
+            comment:     c.comment,
+            suggestion:  c.suggestion,
+            rewrite:     c.rewrite ?? null,
+            confidence:  c.confidence,
+            top_pct:     c.top_pct,
+            left_pct:    c.left_pct,
+            width_pct:   c.width_pct,
+            height_pct:  c.height_pct,
+          })));
+
+        if (commentsError) throw new Error(`Comments insert failed: ${commentsError.message}`);
+        console.log('Inserted', resolvedComments.length, 'comments for report', report_id);
       }
     }
 
