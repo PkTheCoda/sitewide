@@ -1,41 +1,33 @@
 # Sitewide — Build Progress
 
-## Status: Phase 1.1 — Not Started
+## Status: Phase 1.3 — Overlay UI In Progress
 
 ---
 
 ## Phase 1 — Overlay Dashboard
 
 ### 1.1 Auth + Dashboard Shell
-- [ ] Install and configure Supabase client (`@supabase/supabase-js`, `@supabase/ssr`)
-- [ ] Set up Google OAuth in Supabase dashboard
-- [ ] Auth callback route (`/app/auth/callback/route.ts`)
-- [ ] Middleware for session management
-- [ ] Login page (Google sign-in button)
+- [x] Supabase client configured
+- [x] Login + signup pages with form validation
+- [ ] Google OAuth
 - [ ] Protected dashboard layout
-- [ ] "Add your site" form (URL + GA property ID)
-- [ ] `POST /api/sites` route — creates `sites` row in DB
-- [ ] Dashboard home: list of sites as cards with status
+- [ ] "Analyze your site" URL input form on dashboard
 
-### 1.2 Crawl + Analytics Pull
-- [ ] Install Playwright (`npm install playwright`)
-- [ ] Playwright crawl utility: headless browser → full-page screenshot + DOM extraction
-- [ ] Supabase Storage bucket for screenshots
-- [ ] GA4 Data API integration (OAuth + data pull)
-- [ ] `POST /api/sites/[id]/crawl` route (orchestrates crawl + analytics + Claude)
-- [ ] Claude API integration — prompt construction + response parsing
-- [ ] Insert suggestions into DB from Claude response
-- [ ] "Scan my site" button on dashboard → triggers crawl
+### 1.2 Crawl Pipeline
+- [x] Supabase Storage bucket (`screenshots`)
+- [x] `reports` + `comments` tables in Supabase (with RLS)
+- [x] Supabase Edge Function `analyze-page`: Browserless screenshot + DOM extraction → Claude API → coordinates resolved → writes to DB
+- [x] Full pipeline proven end-to-end (tested on stripe.com, talem.org)
+- [x] Switched from Playwright to Browserless (avoids Vercel timeout/binary issues)
+- [ ] `POST /api/analyze` Next.js route (thin wrapper — inserts report row, fires Edge Function)
 
 ### 1.3 Overlay UI
-- [ ] Screenshot display component (full-width image container)
-- [ ] Pin component — absolutely positioned, color-coded by impact
-- [ ] Responsive pin math (percentages → `left/top` CSS)
-- [ ] Suggestion card (tooltip on hover/click: issue, suggestion, variant copy)
-- [ ] Sidebar list of all suggestions (cards)
+- [ ] `app/dashboard/report/[id]/page.tsx` — fetches report + comments
+- [ ] `AnnotationViewer.tsx` — screenshot with absolute overlay layer
+- [ ] `CommentPin.tsx` — bounding box + numbered circle at percentage coords
+- [ ] `CommentSidebar.tsx` — right panel, comment cards with severity badges
 - [ ] Bidirectional highlight: click sidebar card ↔ highlights pin
-- [ ] "Run Experiment" button placeholder (disabled, Phase 2)
-- [ ] `GET /api/sites/[id]/suggestions` route
+- [ ] URL input form → triggers pipeline → loading state → redirects to report page
 
 ---
 
@@ -72,7 +64,10 @@
 
 ## Completed
 
-_(nothing yet — project just initialized)_
+- Auth UI (login + signup pages, form validation)
+- Supabase client + DB tables (`reports`, `comments`) + Storage bucket
+- Full crawl pipeline (Browserless + Claude + coordinate resolution) as Supabase Edge Function
+- End-to-end test: URL in → screenshot + 8 CRO comments with pixel coords out → stored in DB
 
 ---
 
@@ -83,4 +78,7 @@ _(nothing yet — project just initialized)_
 | 2026-06-06 | Chose GA over PostHog as primary analytics source | Broader install base across all startup websites |
 | 2026-06-06 | Self-tracking experiments (not GA) | Simpler, avoids OAuth scope creep, GA not designed for A/B tracking |
 | 2026-06-06 | Playwright over Firecrawl/Browserless | Full control, no extra service dependency for MVP |
+| 2026-06-28 | Switched to Browserless + Supabase Edge Function | Playwright can't run on Vercel free tier; Edge Functions have 150s timeout vs 10s |
+| 2026-06-28 | Two parallel Browserless calls (/screenshot + /function) | Avoids Buffer/base64 encoding issues in sandboxed Deno environment |
+| 2026-06-28 | reports.id is integer (not UUID) | Created table with Supabase default; migrate to UUID before launch |
 | 2026-06-06 | Store pin coords as percentages | Pins stay accurate at any display size |
