@@ -1,15 +1,13 @@
 "use client"
 
-import { useAuth } from "@/services/context/authContext"
+import ProtectedRoute from "@/components/ProtectedRoute"
 
 
 export default function Dashboard() {
 
-  const { user, loading } = useAuth()
-
   return (
-    <div>
+    <ProtectedRoute>
       <h1>Dashboard</h1>
-    </div>
+    </ProtectedRoute>
   )
 }

@@ -1,13 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { SiGoogle } from "react-icons/si";
 import Image from "next/image";
 import logo from "@/public/assets/sitewide-logo-v3.svg";
 
 import { createNewUser, signInWithEmail, NewUserData } from "@/services/auth";
+
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/services/context/authContext";
 
 const COLS = 12;
 const ROWS = 5;
@@ -25,6 +27,8 @@ export default function AuthPage() {
   const [tab, setTab] = useState<Tab>("signup");
   const isLogin = tab === "login";
   const router = useRouter();
+
+  const { user, loading } = useAuth()
 
   const [authData, setAuthData] = useState<NewUserData>({
     username: "",
@@ -105,6 +109,23 @@ export default function AuthPage() {
 
     router.push("/dashboard");
   }
+
+  useEffect(() => {
+    if (!loading && user) {
+      router.replace("/dashboard");
+    }
+  }, [loading, user, router]);
+
+  if (loading) {
+    return <div>Loading...</div>;
+  }
+
+  // Prevent the sign-in form from flashing before redirecting
+  if (user) {
+    return null;
+  }
+
+
 
   return (
     <section className="relative h-screen w-full bg-slate-50">
