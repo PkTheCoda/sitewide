@@ -4,9 +4,10 @@ import { createClient } from "@supabase/supabase-js";
 const BROWSERLESS_URL = "https://chrome.browserless.io";
 const VIEWPORT = { width: 1440, height: 900 };
 
-// Runs inside Browserless's Chrome via the /function endpoint.
-// Does element extraction only — screenshot is handled separately via /screenshot
-// so we never have to deal with binary encoding in a sandboxed environment.
+// Single Browserless /function call: screenshot + element extraction in one Chrome instance.
+// This guarantees that element pixel positions align with the screenshot — they are measured
+// from the exact same rendered DOM that was captured. The screenshot is returned as base64
+// and decoded in Deno via atob() (standard Web API, no Node Buffer needed).
 const EXTRACT_SCRIPT = `
 export default async function({ page, context }) {
   const { url } = context;
@@ -30,6 +31,18 @@ export default async function({ page, context }) {
       }, 50);
     });
   });
+
+  // Screenshot taken from this same page instance — positions will match exactly.
+  // Browserless runs in a browser (Chrome V8) context, not Node.js — no Buffer.
+  // Chunk the Uint8Array → binary string to avoid call stack limits on large images.
+  const rawScreenshot = await page.screenshot({ fullPage: true, type: 'webp' });
+  const bytes = new Uint8Array(rawScreenshot);
+  let binary = '';
+  const chunk = 8192;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  const screenshotBase64 = btoa(binary);
 
   const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight);
 
@@ -82,7 +95,7 @@ export default async function({ page, context }) {
   const pageText = await page.evaluate(() => document.body.innerText?.slice(0, 3000) || '');
 
   return {
-    data: { elements, pageHeight, pageText },
+    data: { elements, pageHeight, pageText, screenshotBase64 },
     type: 'application/json',
   };
 }
@@ -157,51 +170,31 @@ Deno.serve(async (req) => {
       console.log('Created report:', report_id);
     }
 
-    // ── Step 1: Screenshot + element extraction in parallel ───────────────
-    // Two separate Browserless calls, each in its own Chrome instance.
-    // Running them in parallel saves ~15-30 seconds vs sequential.
-    //
-    // /screenshot returns raw image bytes — no encoding issues.
-    // /function runs our EXTRACT_SCRIPT — returns plain JSON.
-    // scrollPage: true on /screenshot mirrors our manual autoScroll in the
-    // extract script, so lazy-loaded content appears in both.
+    // ── Step 1: Screenshot + element extraction in one Chrome instance ────────
+    const extractRes = await fetch(`${BROWSERLESS_URL}/function?token=${browserlessKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: EXTRACT_SCRIPT, context: { url } }),
+    });
 
-    const [screenshotRes, extractRes] = await Promise.all([
-      fetch(`${BROWSERLESS_URL}/screenshot?token=${browserlessKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url,
-          options: { fullPage: true, type: 'webp' },
-          viewport: VIEWPORT,
-          scrollPage: true,
-        }),
-      }),
-      fetch(`${BROWSERLESS_URL}/function?token=${browserlessKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: EXTRACT_SCRIPT, context: { url } }),
-      }),
-    ]);
-
-    if (!screenshotRes.ok) {
-      throw new Error(`Browserless screenshot error ${screenshotRes.status}: ${await screenshotRes.text()}`);
-    }
     if (!extractRes.ok) {
-      throw new Error(`Browserless extract error ${extractRes.status}: ${await extractRes.text()}`);
+      throw new Error(`Browserless error ${extractRes.status}: ${await extractRes.text()}`);
     }
 
     const extractRaw = await extractRes.json();
     console.log('Extract raw response:', JSON.stringify(extractRaw).slice(0, 300));
 
-    // Browserless may return { data: { elements, ... } } or { elements, ... } directly
-    const extractData = extractRaw.elements ? extractRaw : (extractRaw.data ?? extractRaw);
-    const { elements, pageHeight, pageText } = extractData;
+    // Browserless may return { data: { ... } } or the payload directly
+    const extractData = extractRaw.screenshotBase64 ? extractRaw : (extractRaw.data ?? extractRaw);
+    const { elements, pageHeight, pageText, screenshotBase64 } = extractData;
     console.log('Elements extracted:', elements?.length, '| pageHeight:', pageHeight);
 
+    if (!screenshotBase64) throw new Error('No screenshot returned from Browserless');
+
     // ── Step 2: Upload screenshot to Supabase Storage ──────────────────────
-    // screenshotRes.arrayBuffer() gives us raw bytes — no base64 dance needed.
-    const screenshotBytes = new Uint8Array(await screenshotRes.arrayBuffer());
+    // atob() is a standard Web API available in Deno — no Node Buffer needed.
+    // Strip whitespace first in case the encoding added line breaks.
+    const screenshotBytes = Uint8Array.from(atob(screenshotBase64.replace(/\s/g, '')), c => c.charCodeAt(0));
     const storagePath = `${report_id ?? 'test'}/${Date.now()}.webp`;
 
     const { error: uploadError } = await supabase.storage
