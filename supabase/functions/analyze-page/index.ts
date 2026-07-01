@@ -75,13 +75,23 @@ export default async function({ page, context }) {
         if (seen.has(key)) return;
         seen.add(key);
 
+        // Best-effort CSS selector: id → tag.class → tag
+        const tag = el.tagName.toLowerCase();
+        const cls = (el.className || '').toString().trim().split(/\s+/).filter(Boolean).slice(0, 2);
+        const selector = el.id
+          ? '#' + CSS.escape(el.id)
+          : cls.length
+            ? tag + '.' + cls.map(c => CSS.escape(c)).join('.')
+            : tag;
+
         results.push({
           id:        nextId++,
-          tag:       el.tagName.toLowerCase(),
+          tag,
           text:      text ? text.slice(0, 120) : null,
           alt:       alt  || null,
           className: (el.className || '').toString().slice(0, 80),
           elId:      el.id || '',
+          selector,
           top, left,
           width:  Math.round(rect.width),
           height: Math.round(rect.height),
@@ -222,40 +232,66 @@ Deno.serve(async (req) => {
       position: `${Math.round((el.top / pageHeight) * 100)}% from top`,
     }));
 
-    // ── Step 4: Gemini analysis ────────────────────────────────────────────
-    // Gemini gets the readable page text + the element map with positions.
-    // responseMimeType: 'application/json' tells Gemini to return pure JSON —
-    // no markdown code fences to strip, no parsing surprises.
+    // ── Step 4: Claude analysis ────────────────────────────────────────────
 
-    const prompt = `You are a CRO expert analyzing a landing page for conversion effectiveness.
+    const prompt = `You are a senior conversion rate optimization (CRO) strategist. A startup founder has paid to understand why their landing page isn't converting visitors into customers.
+
+YOUR ONLY JOB: Find what is stopping visitors from signing up, starting a trial, or clicking the primary CTA. Every comment you write must be about revenue — about getting more people to convert.
+
+DO NOT FLAG:
+- Missing alt text or accessibility issues
+- SEO problems (meta tags, heading hierarchy)
+- Performance or load time
+- Color contrast or visual design taste
+- Navigation structure
+- Anything a UX designer would flag but a growth marketer wouldn't care about
+
+ONLY FLAG elements where changing the copy, placement, or visibility would measurably increase the percentage of visitors who convert.
 
 PAGE TEXT:
 ${pageText}
 
 SECTIONS DETECTED: ${Object.keys(sections).join(', ') || 'none detected'}
 
-KEY ELEMENTS (reference ONLY by numeric id field):
+KEY ELEMENTS (reference ONLY by numeric id):
 ${JSON.stringify(elementSummary, null, 2)}
 
-Return ONLY valid JSON, no markdown wrapping:
+CONVERSION DIMENSIONS — use exactly one per comment:
+- "Value Proposition" — the headline or subheadline doesn't communicate a specific, differentiated outcome. Visitors don't immediately understand what this is, who it's for, or why it's better.
+- "CTA Effectiveness" — the call-to-action is generic, below the fold, visually buried, or unclear about what happens next after clicking.
+- "Social Proof" — missing or weak evidence that real people trust and use this. No numbers, no logos, no testimonials above the fold.
+- "Friction & Clarity" — copy, form fields, or page structure that creates confusion, hesitation, or extra work for the visitor.
+- "Urgency & Motivation" — no reason for the visitor to act today instead of next week. No trial, no deadline, no consequence of waiting.
+- "Pricing Psychology" — pricing is presented in a way that creates sticker shock, confusion, or doesn't guide the visitor toward a decision.
+
+Return ONLY valid JSON with no markdown or code fences:
 {
-  "overall_score": <1-10>,
-  "summary": "<2 sentence overall assessment>",
+  "overall_score": <1-10, purely conversion effectiveness>,
+  "summary": "<2 sentences: the single biggest conversion killer on this page, and one thing that's actually working>",
   "comments": [
     {
-      "element_id": <number — must match an id above>,
+      "element_id": <number — must exactly match an id in the element list above>,
       "element_tag": "<tag>",
-      "section": "<section name>",
-      "dimension": "<Value Proposition|CTA Clarity|Social Proof|Trust Signals|Visual Hierarchy|Messaging>",
+      "section": "<section>",
+      "dimension": "<one of the 6 dimensions above, exactly>",
       "severity": "<critical|warning|suggestion|positive>",
-      "comment": "<what is wrong and why it hurts conversion>",
-      "suggestion": "<specific actionable fix>",
-      "rewrite": "<improved copy if text element, otherwise null>"
+      "comment": "<what conversion problem this creates — be specific about why a visitor would bounce or hesitate here>",
+      "suggestion": "<the exact change to make>",
+      "hypothesis": "<If we change [specific element] to [specific thing], [signups/trials/clicks] will increase because [specific psychological or behavioral reason]>",
+      "variants": ["<variant 1: specific, ready-to-use copy or change>", "<variant 2>"],
+      "test_type": "<copy_change|visibility|reorder>"
     }
   ]
 }
 
-Rules: max 15 comments, at least 1 positive, reference elements by id only.`;
+STRICT RULES:
+- 8 to 10 comments. No more, no less.
+- At least 1 "positive" severity — something that genuinely helps conversion and should be kept.
+- "critical" = this is actively killing conversions right now. "warning" = fixing this would produce meaningful lift. "suggestion" = incremental improvement. "positive" = this is working, don't change it.
+- variants must be SPECIFIC and usable as-is. Not descriptions — actual copy the founder can drop in. For non-text changes (reorder, visibility), describe the exact change ("Move pricing section above testimonials").
+- test_type is "copy_change" for text swaps, "visibility" for showing or hiding an element, "reorder" for moving a section up or down the page.
+- If you cannot write a specific, falsifiable hypothesis for a comment, do not include that comment.
+- Reference elements by id only. Never reference an id that isn't in the list above.`;
 
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -266,7 +302,7 @@ Rules: max 15 comments, at least 1 positive, reference elements by id only.`;
       },
       body: JSON.stringify({
         model:      'claude-haiku-4-5-20251001',
-        max_tokens: 2000,
+        max_tokens: 8000,
         messages:   [{ role: 'user', content: prompt }],
       }),
     });
@@ -277,6 +313,13 @@ Rules: max 15 comments, at least 1 positive, reference elements by id only.`;
 
     const claudeData = await claudeRes.json();
     let rawText = claudeData.content[0].text.trim();
+    const stopReason = claudeData.stop_reason;
+    console.log('Claude stop_reason:', stopReason, '| output length:', rawText.length);
+
+    if (stopReason === 'max_tokens') {
+      throw new Error(`Claude output was truncated (max_tokens hit at ${rawText.length} chars) — increase max_tokens or reduce comment count`);
+    }
+
     if (rawText.startsWith('```')) {
       rawText = rawText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
     }
@@ -301,10 +344,12 @@ Rules: max 15 comments, at least 1 positive, reference elements by id only.`;
         return {
           ...comment,
           confidence,
-          top_pct:    el.top    / pageHeight,
-          left_pct:   el.left   / VIEWPORT.width,
-          width_pct:  el.width  / VIEWPORT.width,
-          height_pct: el.height / pageHeight,
+          selector:       el.selector,
+          original_value: el.text ?? el.alt ?? null,
+          top_pct:        el.top    / pageHeight,
+          left_pct:       el.left   / VIEWPORT.width,
+          width_pct:      el.width  / VIEWPORT.width,
+          height_pct:     el.height / pageHeight,
         };
       })
       .filter(Boolean);
@@ -331,19 +376,23 @@ Rules: max 15 comments, at least 1 positive, reference elements by id only.`;
           .from('comments')
           .insert(resolvedComments.map((c: any) => ({
             report_id,
-            element_id:  c.element_id,
-            element_tag: c.element_tag,
-            section:     c.section,
-            dimension:   c.dimension,
-            severity:    c.severity,
-            comment:     c.comment,
-            suggestion:  c.suggestion,
-            rewrite:     c.rewrite ?? null,
-            confidence:  c.confidence,
-            top_pct:     c.top_pct,
-            left_pct:    c.left_pct,
-            width_pct:   c.width_pct,
-            height_pct:  c.height_pct,
+            element_id:     c.element_id,
+            element_tag:    c.element_tag,
+            section:        c.section,
+            dimension:      c.dimension,
+            severity:       c.severity,
+            comment:        c.comment,
+            suggestion:     c.suggestion,
+            hypothesis:     c.hypothesis     ?? null,
+            variants:       c.variants       ?? [],
+            test_type:      c.test_type      ?? 'copy_change',
+            selector:       c.selector       ?? null,
+            original_value: c.original_value ?? null,
+            confidence:     c.confidence,
+            top_pct:        c.top_pct,
+            left_pct:       c.left_pct,
+            width_pct:      c.width_pct,
+            height_pct:     c.height_pct,
           })));
 
         if (commentsError) throw new Error(`Comments insert failed: ${commentsError.message}`);

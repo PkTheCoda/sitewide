@@ -24,7 +24,11 @@ export type Comment = {
     severity: Severity;
     comment: string;
     suggestion: string;
-    rewrite: string | null;
+    hypothesis: string | null;
+    variants: string[];
+    test_type: string | null;
+    selector: string | null;
+    original_value: string | null;
     confidence: number;
     top_pct: number;
     left_pct: number;
