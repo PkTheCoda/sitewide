@@ -114,17 +114,18 @@ export default function CommentSidebar({ report, comments, activeIndex, onNaviga
                                         </div>
                                     ))}  
 
-                                    <div className="grid place-items-center grid-cols-8 w-full group">
+                                    <div className="grid place-items-center grid-cols-8 w-full group transition-colors">
                                         <div className="w-full h-full flex items-center justify-center">
-                                            <BsArrow90DegDown strokeWidth={0.5} className="-rotate-90 group-focus:text-orange-600 size-4 col-span-1 text-slate-300 group-focus-within:text-orange-600 transition-colors group-hover:text-orange-600" />
+                                            <BsArrow90DegDown strokeWidth={0.5} className="-rotate-90 size-4 col-span-1 text-slate-300 group-focus-within:text-orange-600 group-hover:text-orange-600 transition-colors" />
                                         </div>
                                         <input
                                             type="text"
-                                            className="col-span-7 shadow-[0px_0px_0px_1px_rgba(0,0,0,0.06),0px_1px_1px_-0.5px_rgba(0,0,0,0.06),0px_3px_3px_-1.5px_rgba(0,0,0,0.06),_0px_6px_6px_-3px_rgba(0,0,0,0.06),0px_12px_12px_-6px_rgba(0,0,0,0.06),0px_24px_24px_-12px_rgba(0,0,0,0.06)] text-xs text-slate-700 leading-relaxed w-full bg-slate-50 py-2 px-4 rounded-md border border-slate-200 focus:outline-none hover:border-orange-600 focus:border-orange-600 placeholder-slate-400 transition-all"
+                                            className="col-span-7 group-hover:border-orange-600 shadow-[0px_0px_0px_1px_rgba(0,0,0,0.06),0px_1px_1px_-0.5px_rgba(0,0,0,0.06),0px_3px_3px_-1.5px_rgba(0,0,0,0.06),_0px_6px_6px_-3px_rgba(0,0,0,0.06),0px_12px_12px_-6px_rgba(0,0,0,0.06),0px_24px_24px_-12px_rgba(0,0,0,0.06)] text-xs text-slate-700 leading-relaxed w-full bg-slate-50 py-2 px-4 rounded-md border border-slate-200 focus:outline-none focus:border-orange-600 placeholder-slate-400 transition-all"
                                             placeholder="Suggest your own rewrite..."
                                             style={{ fontFamily: 'inherit' }}
                                         />
                                     </div>
+                              
                               
                               
 

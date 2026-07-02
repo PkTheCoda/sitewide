@@ -84,17 +84,24 @@ export default async function({ page, context }) {
             ? tag + '.' + cls.map(c => CSS.escape(c)).join('.')
             : tag;
 
+        const wordCount = text ? text.trim().split(/\s+/).filter(Boolean).length : 0;
+        const siblingCount = el.parentElement
+          ? el.parentElement.querySelectorAll(tag).length
+          : 1;
+
         results.push({
-          id:        nextId++,
+          id:          nextId++,
           tag,
-          text:      text ? text.slice(0, 120) : null,
-          alt:       alt  || null,
-          className: (el.className || '').toString().slice(0, 80),
-          elId:      el.id || '',
+          text:        text ? text.slice(0, 120) : null,
+          alt:         alt  || null,
+          className:   (el.className || '').toString().slice(0, 80),
+          elId:        el.id || '',
           selector,
           top, left,
-          width:  Math.round(rect.width),
-          height: Math.round(rect.height),
+          width:       Math.round(rect.width),
+          height:      Math.round(rect.height),
+          wordCount,
+          siblingCount,
         });
       });
     });
@@ -224,13 +231,18 @@ Deno.serve(async (req) => {
 
     const sections = detectSections(elements);
 
-    const elementSummary = elements.slice(0, 50).map((el: any) => ({
-      id:       el.id,
-      tag:      el.tag,
-      text:     el.text?.slice(0, 100),
-      section:  getSectionForElement(el, sections),
-      position: `${Math.round((el.top / pageHeight) * 100)}% from top`,
-    }));
+    const elementSummary = elements.slice(0, 50).map((el: any) => {
+      const entry: any = {
+        id:         el.id,
+        tag:        el.tag,
+        text:       el.text?.slice(0, 100),
+        word_count: el.wordCount ?? 0,
+        section:    getSectionForElement(el, sections),
+        position:   `${Math.round((el.top / pageHeight) * 100)}% from top`,
+      };
+      if ((el.siblingCount ?? 1) > 1) entry.siblings = el.siblingCount;
+      return entry;
+    });
 
     // ── Step 4: Claude analysis ────────────────────────────────────────────
 
@@ -240,12 +252,15 @@ YOUR ONLY JOB: Find what is stopping visitors from signing up, starting a trial,
 
 DO NOT FLAG: accessibility, alt text, SEO, performance, color contrast, navigation structure. Only flag things a growth marketer cares about — copy, placement, and messaging that directly affect whether someone converts.
 
+TONE RULE: Read the page copy carefully and identify the industry, audience, and vocabulary in use (e.g. AI SaaS, fintech, legal, e-commerce). Every suggestion and variant you write must use that same vocabulary and register. A technical AI product should get technical copy. A law firm should get formal copy. Never suggest copy that sounds out of place on this specific site.
+
 PAGE TEXT:
 ${pageText}
 
 SECTIONS: ${Object.keys(sections).join(', ') || 'none detected'}
 
 KEY ELEMENTS (reference by numeric id only):
+Each element has a word_count showing how many words are in the current copy. If siblings is present, this element is one of N repeating items in the same container (e.g. 1 of 3 feature cards).
 ${JSON.stringify(elementSummary, null, 2)}
 
 DIMENSIONS — pick exactly one per comment:
@@ -280,8 +295,11 @@ Return ONLY valid JSON, no markdown:
 
 RULES:
 - 8 to 10 comments.
+- ONE element per comment. Never combine two elements (e.g. h1 + subtitle) into a single comment. Each comment must reference exactly one element_id.
+- Each element_id must appear at most once in the comments array. Never create two comments for the same element.
 - comment and why_it_matters: short, direct sentences. No em dashes. No "which causes" chains. No padding.
-- variants: specific, drop-in ready. Actual copy — not descriptions. For layout changes, describe the exact move.
+- variants: exact drop-in replacement copy for that element's text. Must match the element's word_count within ±2 words. Do not write longer copy to replace short copy.
+- If an element has siblings > 1, it is one of N repeating items. Variants must be the same approximate length as each other and as the original — they all need to fit the same layout slot.
 - CRITICAL: never use double-quote characters ( " ) inside any string value. Use single quotes or rephrase. Double quotes inside JSON strings will break the response.
 - effort: "Quick win" = copy change only. "Some work" = structural change. "Big lift" = new content or redesign.
 - impact: expected conversion lift. "High" = major lever, "Medium" = meaningful, "Low" = incremental.
