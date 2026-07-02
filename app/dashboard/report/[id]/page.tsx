@@ -16,33 +16,35 @@ export default function ReportPage() {
     const [report, setReport] = useState<Report | null>(null);
     const [comments, setComments] = useState<Comment[]>([]);
     const [loading, setLoading] = useState(true);
-    const [activeId, setActiveId] = useState<string | null>(null);
+    const [activeIndex, setActiveIndex] = useState(0);
 
     const pinRefs = useRef<Record<string, HTMLDivElement | null>>({});
-    const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
     useEffect(() => {
         if (!reportId) return;
-
         async function load() {
             const [reportData, commentsData] = await Promise.all([
                 getReport(reportId),
                 getComments(reportId),
             ]);
-
             if (reportData && !("error" in reportData)) setReport(reportData as Report);
             if (Array.isArray(commentsData)) setComments(commentsData as Comment[]);
-
             setLoading(false);
         }
-
         load();
     }, [reportId]);
 
+    const activeId = comments[activeIndex]?.id ?? null;
+
+    function navigate(index: number) {
+        setActiveIndex(index);
+        const id = comments[index]?.id;
+        if (id) pinRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
     function selectComment(id: string) {
-        setActiveId(id);
-        pinRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "center" });
-        cardRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        const idx = comments.findIndex(c => c.id === id);
+        if (idx !== -1) navigate(idx);
     }
 
     return (
@@ -66,6 +68,13 @@ export default function ReportPage() {
                     </div>
                 ) : (
                     <div className="flex">
+                        <CommentSidebar
+                            report={report}
+                            comments={comments}
+                            activeIndex={activeIndex}
+                            onNavigate={navigate}
+                        />
+
                         <div className="flex-1 p-8">
                             <Link
                                 href="/dashboard"
@@ -85,16 +94,6 @@ export default function ReportPage() {
                                 />
                             </div>
                         </div>
-
-                        <CommentSidebar
-                            report={report}
-                            comments={comments}
-                            activeId={activeId}
-                            onCardClick={selectComment}
-                            registerCardRef={(id, el) => {
-                                cardRefs.current[id] = el;
-                            }}
-                        />
                     </div>
                 )}
             </div>
