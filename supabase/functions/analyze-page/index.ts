@@ -282,6 +282,7 @@ RULES:
 - 8 to 10 comments.
 - comment and why_it_matters: short, direct sentences. No em dashes. No "which causes" chains. No padding.
 - variants: specific, drop-in ready. Actual copy — not descriptions. For layout changes, describe the exact move.
+- CRITICAL: never use double-quote characters ( " ) inside any string value. Use single quotes or rephrase. Double quotes inside JSON strings will break the response.
 - effort: "Quick win" = copy change only. "Some work" = structural change. "Big lift" = new content or redesign.
 - impact: expected conversion lift. "High" = major lever, "Medium" = meaningful, "Low" = incremental.
 - Skip any comment you can't write a specific hypothesis for.
@@ -317,7 +318,15 @@ RULES:
     if (rawText.startsWith('```')) {
       rawText = rawText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
     }
-    const analysis = JSON.parse(rawText);
+    let analysis: any;
+    try {
+      analysis = JSON.parse(rawText);
+    } catch (parseErr: any) {
+      const pos = parseInt(parseErr.message.match(/position (\d+)/)?.[1] ?? '0');
+      console.error('JSON parse failed:', parseErr.message);
+      console.error('Context around failure:', rawText.slice(Math.max(0, pos - 120), pos + 120));
+      throw new Error(`Claude returned malformed JSON: ${parseErr.message}`);
+    }
 
     // ── Step 5: Resolve element_id → real pixel coordinates ───────────────
     // The model returns "element 12 has a weak CTA". We look up element 12 in our
