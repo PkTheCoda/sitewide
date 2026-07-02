@@ -42,9 +42,13 @@ export default function ReportPage() {
         if (id) pinRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
 
+    // when a comment pin is clicked, this runs and navigates to the comment
     function selectComment(id: string) {
+        const selectedComment = comments.filter(comment => comment.id === id)
         const idx = comments.findIndex(c => c.id === id);
-        if (idx !== -1) navigate(idx);
+        console.log(selectedComment)
+        
+        if (idx !== -1) navigate(idx); // scroll to the respective comment pin
     }
 
     return (
@@ -75,7 +79,7 @@ export default function ReportPage() {
                             onNavigate={navigate}
                         />
 
-                        <div className="flex-1 p-8">
+                        <div className="flex-1 px-8 py-4">
                             <Link
                                 href="/dashboard"
                                 className="text-sm text-slate-500 hover:text-orange-600 transition-colors"
