@@ -6,7 +6,6 @@ export const SEVERITY_COLORS: Record<Severity, { border: string; bg: string; tex
     critical: { border: "border-red-500", bg: "bg-red-600", text: "text-red-700", bgOpacity: "bg-red-600/10" },
     warning: { border: "border-amber-500", bg: "bg-amber-600", text: "text-amber-700", bgOpacity: "bg-amber-600/10" },
     suggestion: { border: "border-blue-500", bg: "bg-blue-600", text: "text-blue-700", bgOpacity: "bg-blue-600/10" },
-    positive: { border: "border-green-500", bg: "bg-green-600", text: "text-green-700", bgOpacity: "bg-green-600/10" },
 };
 
 type Props = {
@@ -18,7 +17,7 @@ type Props = {
 };
 
 export default function CommentPin({ comment, index, active, onClick, registerRef }: Props) {
-    const colors = SEVERITY_COLORS[comment.severity];
+    const colors = SEVERITY_COLORS[comment.severity] ?? SEVERITY_COLORS["suggestion"];
     const dashed = comment.confidence < 0.6;
 
     return (

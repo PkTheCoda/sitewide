@@ -234,64 +234,58 @@ Deno.serve(async (req) => {
 
     // ── Step 4: Claude analysis ────────────────────────────────────────────
 
-    const prompt = `You are a senior conversion rate optimization (CRO) strategist. A startup founder has paid to understand why their landing page isn't converting visitors into customers.
+    const prompt = `You are a senior conversion rate optimization (CRO) strategist. A startup founder needs to know why their landing page isn't converting visitors into customers.
 
-YOUR ONLY JOB: Find what is stopping visitors from signing up, starting a trial, or clicking the primary CTA. Every comment you write must be about revenue — about getting more people to convert.
+YOUR ONLY JOB: Find what is stopping visitors from signing up, starting a trial, or clicking the CTA.
 
-DO NOT FLAG:
-- Missing alt text or accessibility issues
-- SEO problems (meta tags, heading hierarchy)
-- Performance or load time
-- Color contrast or visual design taste
-- Navigation structure
-- Anything a UX designer would flag but a growth marketer wouldn't care about
-
-ONLY FLAG elements where changing the copy, placement, or visibility would measurably increase the percentage of visitors who convert.
+DO NOT FLAG: accessibility, alt text, SEO, performance, color contrast, navigation structure. Only flag things a growth marketer cares about — copy, placement, and messaging that directly affect whether someone converts.
 
 PAGE TEXT:
 ${pageText}
 
-SECTIONS DETECTED: ${Object.keys(sections).join(', ') || 'none detected'}
+SECTIONS: ${Object.keys(sections).join(', ') || 'none detected'}
 
-KEY ELEMENTS (reference ONLY by numeric id):
+KEY ELEMENTS (reference by numeric id only):
 ${JSON.stringify(elementSummary, null, 2)}
 
-CONVERSION DIMENSIONS — use exactly one per comment:
-- "Value Proposition" — the headline or subheadline doesn't communicate a specific, differentiated outcome. Visitors don't immediately understand what this is, who it's for, or why it's better.
-- "CTA Effectiveness" — the call-to-action is generic, below the fold, visually buried, or unclear about what happens next after clicking.
-- "Social Proof" — missing or weak evidence that real people trust and use this. No numbers, no logos, no testimonials above the fold.
-- "Friction & Clarity" — copy, form fields, or page structure that creates confusion, hesitation, or extra work for the visitor.
-- "Urgency & Motivation" — no reason for the visitor to act today instead of next week. No trial, no deadline, no consequence of waiting.
-- "Pricing Psychology" — pricing is presented in a way that creates sticker shock, confusion, or doesn't guide the visitor toward a decision.
+DIMENSIONS — pick exactly one per comment:
+- "Value Proposition" — headline/subheadline doesn't communicate a specific, differentiated outcome
+- "CTA Effectiveness" — CTA is generic, buried, or unclear about what happens after clicking
+- "Social Proof" — weak or missing evidence that real people trust this product
+- "Friction & Clarity" — copy or structure creates confusion or hesitation
+- "Urgency & Motivation" — no reason to act now instead of later
+- "Pricing Psychology" — pricing creates sticker shock, confusion, or doesn't guide a decision
 
-Return ONLY valid JSON with no markdown or code fences:
+Return ONLY valid JSON, no markdown:
 {
-  "overall_score": <1-10, purely conversion effectiveness>,
-  "summary": "<2 sentences: the single biggest conversion killer on this page, and one thing that's actually working>",
+  "overall_score": <1-10>,
+  "summary": "<2 short sentences: biggest conversion killer and one thing working>",
   "comments": [
     {
-      "element_id": <number — must exactly match an id in the element list above>,
+      "element_id": <number matching an id above>,
       "element_tag": "<tag>",
       "section": "<section>",
-      "dimension": "<one of the 6 dimensions above, exactly>",
-      "severity": "<critical|warning|suggestion|positive>",
-      "comment": "<what conversion problem this creates — be specific about why a visitor would bounce or hesitate here>",
-      "suggestion": "<the exact change to make>",
-      "hypothesis": "<If we change [specific element] to [specific thing], [signups/trials/clicks] will increase because [specific psychological or behavioral reason]>",
-      "variants": ["<variant 1: specific, ready-to-use copy or change>", "<variant 2>"],
-      "test_type": "<copy_change|visibility|reorder>"
+      "dimension": "<dimension>",
+      "severity": "<critical|warning|suggestion>",
+      "comment": "<the problem in 1-2 short sentences. Direct, no em dashes, no filler. State what is wrong and why a visitor bounces.>",
+      "why_it_matters": "<1-2 sentences on the conversion impact. What does this cost the founder in lost signups or clicks?>",
+      "suggestion": "<one sentence: the specific change to make>",
+      "hypothesis": "<If [specific element] is changed to [specific thing], [signups/trials/clicks] will increase because [psychological reason]>",
+      "variants": ["<variant 1: exact ready-to-use copy>", "<variant 2: exact ready-to-use copy>"],
+      "test_type": "<copy_change|visibility|reorder>",
+      "meta": { "effort": "<Quick win|Some work|Big lift>", "impact": "<High|Medium|Low>" }
     }
   ]
 }
 
-STRICT RULES:
-- 8 to 10 comments. No more, no less.
-- At least 1 "positive" severity — something that genuinely helps conversion and should be kept.
-- "critical" = this is actively killing conversions right now. "warning" = fixing this would produce meaningful lift. "suggestion" = incremental improvement. "positive" = this is working, don't change it.
-- variants must be SPECIFIC and usable as-is. Not descriptions — actual copy the founder can drop in. For non-text changes (reorder, visibility), describe the exact change ("Move pricing section above testimonials").
-- test_type is "copy_change" for text swaps, "visibility" for showing or hiding an element, "reorder" for moving a section up or down the page.
-- If you cannot write a specific, falsifiable hypothesis for a comment, do not include that comment.
-- Reference elements by id only. Never reference an id that isn't in the list above.`;
+RULES:
+- 8 to 10 comments.
+- comment and why_it_matters: short, direct sentences. No em dashes. No "which causes" chains. No padding.
+- variants: specific, drop-in ready. Actual copy — not descriptions. For layout changes, describe the exact move.
+- effort: "Quick win" = copy change only. "Some work" = structural change. "Big lift" = new content or redesign.
+- impact: expected conversion lift. "High" = major lever, "Medium" = meaningful, "Low" = incremental.
+- Skip any comment you can't write a specific hypothesis for.
+- Only reference element ids from the list above.`;
 
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -382,12 +376,14 @@ STRICT RULES:
             dimension:      c.dimension,
             severity:       c.severity,
             comment:        c.comment,
+            why_it_matters: c.why_it_matters ?? null,
             suggestion:     c.suggestion,
             hypothesis:     c.hypothesis     ?? null,
             variants:       c.variants       ?? [],
             test_type:      c.test_type      ?? 'copy_change',
             selector:       c.selector       ?? null,
             original_value: c.original_value ?? null,
+            meta:           c.meta           ?? null,
             confidence:     c.confidence,
             top_pct:        c.top_pct,
             left_pct:       c.left_pct,

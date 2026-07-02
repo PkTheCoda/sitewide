@@ -12,7 +12,7 @@ export type Report = {
     created_at: string;
 };
 
-export type Severity = "critical" | "warning" | "suggestion" | "positive";
+export type Severity = "critical" | "warning" | "suggestion";
 
 export type Comment = {
     id: string;
@@ -23,12 +23,14 @@ export type Comment = {
     dimension: string;
     severity: Severity;
     comment: string;
+    why_it_matters: string | null;
     suggestion: string;
     hypothesis: string | null;
     variants: string[];
     test_type: string | null;
     selector: string | null;
     original_value: string | null;
+    meta: { effort: "Quick win" | "Some work" | "Big lift"; impact: "High" | "Medium" | "Low" } | null;
     confidence: number;
     top_pct: number;
     left_pct: number;

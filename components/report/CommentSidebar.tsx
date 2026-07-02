@@ -7,7 +7,6 @@ const SEVERITY_LABEL: Record<Severity, string> = {
     critical: "Critical",
     warning: "Warning",
     suggestion: "Suggestion",
-    positive: "Positive",
 };
 
 type Props = {
@@ -42,7 +41,7 @@ export default function CommentSidebar({
 
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {comments.map((comment, index) => {
-                    const colors = SEVERITY_COLORS[comment.severity];
+                    const colors = SEVERITY_COLORS[comment.severity] ?? SEVERITY_COLORS["suggestion"];
                     const active = comment.id === activeId;
 
                     return (
