@@ -47,47 +47,81 @@ export default async function({ page, context }) {
   const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight);
 
   const elements = await page.evaluate(() => {
+    // Original tags first — Claude's summary takes the first 50 elements in
+    // capture order, so keeping this order preserves analysis behavior.
+    // The tags appended at the end (p, a, li, label, img) exist for the
+    // experiment builder, where founders can select any visible element.
     const selectors = [
       'h1','h2','h3','header','nav','footer','section','main',
       'button','form','img[alt]',
       '[class*="hero"]','[class*="cta"]','[class*="feature"]',
       '[class*="pricing"]','[class*="testimonial"]','[class*="trust"]',
+      'p','a','li','label','img',
+      // Styled fragments inside headings (e.g. the colored half of an h1) —
+      // selectable on their own so founders can test just that part.
+      'h1 span','h2 span','h3 span',
     ];
+
+    // Unique CSS selector: climb to the nearest uniquely-id'd ancestor (or body),
+    // disambiguating same-tag siblings with :nth-of-type at every step. Unique by
+    // construction, and immune to unstable utility class names (Tailwind etc).
+    function buildSelector(el) {
+      const path = [];
+      let node = el;
+      while (node && node.nodeType === 1 && node.tagName.toLowerCase() !== 'html') {
+        if (node.id && document.querySelectorAll('#' + CSS.escape(node.id)).length === 1) {
+          path.unshift('#' + CSS.escape(node.id));
+          break;
+        }
+        let seg = node.tagName.toLowerCase();
+        const parent = node.parentElement;
+        if (parent) {
+          const sameTag = Array.from(parent.children).filter(c => c.tagName === node.tagName);
+          if (sameTag.length > 1) seg += ':nth-of-type(' + (sameTag.indexOf(node) + 1) + ')';
+        }
+        path.unshift(seg);
+        node = parent;
+      }
+      return path.join(' > ');
+    }
 
     const seen = new Set();
     const results = [];
     let nextId = 0;
+    const MAX_ELEMENTS = 300;
 
     selectors.forEach(selector => {
       document.querySelectorAll(selector).forEach(el => {
+        if (results.length >= MAX_ELEMENTS) return;
+
         const rect = el.getBoundingClientRect();
         const style = window.getComputedStyle(el);
         const text = el.innerText?.trim();
         const alt = el.alt?.trim();
+        const tag = el.tagName.toLowerCase();
 
         if (rect.width < 50 || rect.height < 20) return;
-        if (!text && !alt) return;
+        if (!text && !alt && tag !== 'img') return;
         if (style.position === 'fixed' || style.position === 'sticky') return;
 
         const top  = Math.round(rect.top  + window.scrollY);
         const left = Math.round(rect.left + window.scrollX);
-        const key  = top + '-' + left;
+        // Tag-aware key: dedupes the same element matched by two selectors,
+        // but keeps distinct nested elements that share a corner (a span at
+        // the very start of its h1 would otherwise be dropped).
+        const key  = tag + '-' + top + '-' + left;
         if (seen.has(key)) return;
         seen.add(key);
-
-        // Best-effort CSS selector: id → tag.class → tag
-        const tag = el.tagName.toLowerCase();
-        const cls = (el.className || '').toString().trim().split(/\s+/).filter(Boolean).slice(0, 2);
-        const selector = el.id
-          ? '#' + CSS.escape(el.id)
-          : cls.length
-            ? tag + '.' + cls.map(c => CSS.escape(c)).join('.')
-            : tag;
 
         const wordCount = text ? text.trim().split(/\s+/).filter(Boolean).length : 0;
         const siblingCount = el.parentElement
           ? el.parentElement.querySelectorAll(tag).length
           : 1;
+
+        // Current image URL — the builder shows it next to the replacement
+        // field. Data URLs are skipped (huge, and not useful to display).
+        const rawSrc = tag === 'img' ? (el.currentSrc || el.src || '') : '';
+        const src = rawSrc && !rawSrc.startsWith('data:') ? rawSrc.slice(0, 500) : null;
 
         results.push({
           id:          nextId++,
@@ -96,7 +130,14 @@ export default async function({ page, context }) {
           alt:         alt  || null,
           className:   (el.className || '').toString().slice(0, 80),
           elId:        el.id || '',
-          selector,
+          selector:    buildSelector(el),
+          // Recovery data: if the selector goes stale after the founder
+          // redeploys their site, the snippet re-finds the element by text.
+          fallback:    { tag, text: (text || alt || '').slice(0, 80) },
+          src,
+          // Has child elements (spans, links…) — a plain-text variant would
+          // flatten them, so the builder warns before a text test.
+          hasMarkup:   el.children.length > 0,
           top, left,
           width:       Math.round(rect.width),
           height:      Math.round(rect.height),
@@ -389,6 +430,9 @@ RULES:
           viewport_width: VIEWPORT.width,
           overall_score:  analysis.overall_score,
           summary:        analysis.summary,
+          // Full element map (selectors + bounding boxes) — the experiment
+          // builder hit-tests the cursor against these boxes on the screenshot.
+          elements,
         })
         .eq('id', report_id);
 

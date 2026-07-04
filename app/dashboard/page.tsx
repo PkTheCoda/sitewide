@@ -134,7 +134,7 @@ export default function Dashboard() {
               </div>
           </aside>
 
-          <div className="bg-white p-16 h-full w-full col-span-4 shadow-xs rounded-xl border-[0.5px] border-stone-200">
+          <div className="bg-white p-16 h-full w-full col-span-4 shadow-xs rounded-xl border border-stone-200">
             col2
           </div>
         </div>

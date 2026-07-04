@@ -33,6 +33,16 @@
 
 ## Phase 2 — Experiment Engine
 
+### 2.0 Experiment Builder (done)
+- [x] Edge function: robust unique selectors (`nth-of-type` path walker) + text fallback per element
+- [x] Edge function: expanded element capture (p, a, li, label, img) + persist `elements` JSONB to reports
+- [x] `experiments` + `experiment_variants` tables (with RLS)
+- [x] `lib/experiments.ts` — createExperiment (control + weighted variants), fetch helpers
+- [x] Builder UI at `/dashboard/report/[id]/builder`: hover hit-test canvas (smallest-box-wins), change types (text/style/hide), click + pageview goals, draft submit
+- [x] Image change type (URL swap, no storage) — img targets get Image/Hide tabs only
+- [x] Rich-text warning: `hasMarkup` flag captured; heading spans selectable as their own elements
+- Later: compound variants (multi-element changes per variant), variant preview (Browserless render or snippet edit mode), selector self-healing when snippet reports a miss
+
 - [ ] `public/snippet.js` — the installable JS tag
 - [ ] `GET /api/snippet/config` (edge cached, 60s TTL)
 - [ ] `POST /api/snippet/event` (conversion tracking)

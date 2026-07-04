@@ -9,7 +9,31 @@ export type Report = {
     overall_score: number | null;
     summary: string | null;
     error_message: string | null;
+    elements: PageElement[] | null;
     created_at: string;
+};
+
+// One element captured during the crawl. Coordinates are page pixels measured
+// at the crawl viewport (1440px wide) — divide by viewport_width / page_height
+// to get the percentage position on the screenshot.
+export type PageElement = {
+    id: number;
+    tag: string;
+    text: string | null;
+    alt: string | null;
+    className: string;
+    elId: string;
+    selector: string;
+    fallback: { tag: string; text: string };
+    // Optional: only present on reports crawled after the image/rich-text update
+    src?: string | null;
+    hasMarkup?: boolean;
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+    wordCount: number;
+    siblingCount: number;
 };
 
 export type Severity = "critical" | "warning" | "suggestion";
@@ -39,6 +63,60 @@ export type Comment = {
     created_at: string;
 };
 
+
+// ─── Experiments ──────────────────────────────────────────────────────────────
+
+export type ChangeType = "text" | "style" | "hide" | "image";
+export type GoalType = "click" | "pageview";
+export type ExperimentStatus = "draft" | "running" | "paused" | "completed" | "archived";
+
+// The style properties a variant can change in v1.
+export type StyleChanges = {
+    color?: string;
+    backgroundColor?: string;
+    fontSize?: string;
+};
+
+// What the snippet applies for a variant. Control rows have payload = null.
+export type VariantPayload =
+    | { text: string }
+    | { styles: StyleChanges }
+    | { hide: true }
+    | { src: string } // image swap — the founder hosts the replacement image
+    | null;
+
+export type Experiment = {
+    id: string;
+    user_id: string;
+    report_id: number | null;
+    page_url: string;
+    name: string;
+    hypothesis: string | null;
+    selector: string;
+    selector_fallback: { tag: string; text: string } | null;
+    change_type: ChangeType;
+    original_value: string | null;
+    goal_type: GoalType;
+    goal_selector: string | null;
+    goal_fallback: { tag: string; text: string } | null;
+    goal_page_path: string | null;
+    traffic_percent: number;
+    status: ExperimentStatus;
+    started_at: string | null;
+    ended_at: string | null;
+    created_at: string;
+};
+
+export type ExperimentVariant = {
+    id: string;
+    experiment_id: string;
+    name: string;
+    is_control: boolean;
+    payload: VariantPayload;
+    weight: number;
+    position: number;
+    created_at: string;
+};
 
 // sample obj
 [
