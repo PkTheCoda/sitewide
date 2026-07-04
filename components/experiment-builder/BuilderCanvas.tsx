@@ -50,12 +50,18 @@ export default function BuilderCanvas({
         const pageX = ((e.clientX - rect.left) / rect.width) * viewportWidth;
         const pageY = ((e.clientY - rect.top) / rect.height) * pageHeight;
 
+        // our tap match when a user hovers over anything
         let best: PageElement | null = null;
+
+        // when hovering over anything, check which element we're inside (thru elements array)
         for (const el of elements) {
             const inside =
                 pageX >= el.left && pageX <= el.left + el.width &&
                 pageY >= el.top && pageY <= el.top + el.height;
+               
+            // if we're not inside anything, nothing happens
             if (!inside) continue;
+            // if best element match doesnt exist OR we found a better element (ex. deeper inside), set that equal to best
             if (!best || el.width * el.height < best.width * best.height) best = el;
         }
         setHovered(best);

@@ -13,7 +13,12 @@ import {
     VariantPayload,
 } from "@/lib/types";
 import VariantFields, { isValidImageUrl } from "./VariantFields";
-import GoalSection from "./GoalSection";
+import GoalSection from "./GoalSection";4
+
+import gridPattern from "@/public/assets/grid-pattern-ES1.png"
+
+import sidebarEmpty from "@/public/assets/sidebar-empty-state-graphic1.svg"
+import Image from "next/image";
 
 type Props = {
     report: Report;
@@ -184,24 +189,39 @@ export default function BuilderSidebar({
             </div>
 
             <div className="flex-1 overflow-y-auto flex flex-col gap-6 p-5">
+
                 {/* Step 1 — element */}
-                <section className="flex flex-col gap-2">
-                    <h4 className="uppercase text-slate-500 tracking-wider text-xs font-medium">
-                        1 · Element to test
-                    </h4>
+                <section className="flex flex-col gap-2 items-center justify-center h-full">
                     {target ? (
-                        <div className="bg-orange-50 border border-orange-200 rounded-md py-2 px-3">
-                            <p className="text-xs text-orange-900 line-clamp-2">
-                                <span className="font-semibold uppercase text-[10px] tracking-wider mr-1.5">
-                                    {target.tag}
-                                </span>
-                                {target.text ?? target.alt ?? "(no text)"}
-                            </p>
+                        <div className="w-full">
+                            <h4 className="uppercase text-slate-500 tracking-wider text-xs font-medium">
+                                1 · Element to test
+                            </h4>
+                            <div className="bg-orange-50 border border-orange-200 rounded-md py-2 px-3">
+                                <p className="text-xs text-orange-900 line-clamp-2">
+                                    <span className="font-semibold uppercase text-[10px] tracking-wider mr-1.5">
+                                        {target.tag}
+                                    </span>
+                                    {target.text ?? target.alt ?? "(no text)"}
+                                </p>
+                            </div>
                         </div>
                     ) : (
-                        <p className="text-xs text-slate-400 leading-relaxed bg-slate-50 border border-dashed border-slate-300 rounded-md p-3">
-                            Hover over the page and click the element you want to test.
-                        </p>
+                        <div
+                            className="w-full h-max flex flex-col items-center justify-center text-center px-2   gap-4"
+                        >
+                            <Image src={sidebarEmpty} alt="sidebar empty state" className="w-full h-full" />
+
+                            <div className="flex flex-col gap-2">
+                                <h3 className="text-slate-700 one-title tracking-tight font-medium">
+                                    No Element Selected
+                                </h3>
+                                <p className="text-xs text-slate-500">
+                                    Hover over the page and click the element that you would like to test for this experiment.
+                                </p>
+                            </div>
+
+                        </div>
                     )}
                 </section>
 
