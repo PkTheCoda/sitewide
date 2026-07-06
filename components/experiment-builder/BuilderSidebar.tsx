@@ -17,7 +17,7 @@ import GoalSection from "./GoalSection";4
 
 import gridPattern from "@/public/assets/grid-pattern-ES1.png"
 
-import sidebarEmpty from "@/public/assets/sidebar-empty-state-graphic1.svg"
+import sidebarEmpty from "@/public/assets/sidebar-empty-state-graphic.svg"
 import Image from "next/image";
 
 type Props = {

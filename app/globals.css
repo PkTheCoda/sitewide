@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* inter actually fix this later*/
+/* inter actually fix this lat*/
 @theme inline {
   --font-sans: var(--font-figtree);
   --font-robot: var(--font-robot);

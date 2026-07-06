@@ -1,292 +1,150 @@
 # Sitewide — Full Project Reference
 
+> Last full rewrite: 2026-07-04, after Experiment Builder v1 shipped.
+> `progress.md` is the live task checklist; this file explains what exists and how it works.
+
 ## What This Is
 
-Sitewide is an agentic AI application that autonomously analyzes, tests, and optimizes the landing pages of early-stage startup founders (targeting $5K–$500K ARR). The core insight: founders at this stage are too busy (pitching VCs, talking to customers, shipping) to run CRO experiments themselves. Sitewide does it for them, automatically.
+Sitewide is an agentic CRO / A/B testing platform. Target ICP: **SaaS/PLG companies with ~10k–20k+ monthly visitors and no dedicated CRO person.** Not tiny pre-traffic startups (their tests never reach significance), not enterprise.
 
----
+Two experiment creation paths:
+1. **AI analysis** — crawl any URL, Claude generates specific CRO comments with ready-to-use variant copy, overlaid on a screenshot of the page. Works with zero historical traffic data (the cold-start advantage over reactive-AI competitors).
+2. **Manual builder** — founder clicks any element on the screenshot, defines a change (text / style / image / hide) and a conversion goal, submits an experiment.
 
-## The Value Chain
+Both paths feed the same experiments database. A JS snippet (next build) serves variants to real visitors and tracks conversions; an evaluation loop later picks winners and promotes them.
 
-```
-User's GA data          → tells us WHERE the problems are
-Playwright crawl        → tells us WHAT is on the page
-Claude API              → determines WHAT to change
-Our JS snippet          → RUNS the experiment on real visitors
-Our math               → picks the WINNER
-```
+## Strategy snapshot (July 2026)
 
-Sitewide sits between the founder's analytics and their website — not replacing either, just acting as the brain that connects them.
+- **Wedge:** A/B-testing-first, vs Humblytics (closest competitor) which is analytics-first and charges $19/mo for ONE test because their costs are event-metered. Sitewide's tracking is experiment-scoped (~1–2% of an analytics product's event volume) → "unlimited tests" is structurally cheap. Attack their pricing.
+- **Anti-scope-creep rule:** NO heatmaps, NO funnels, NO general analytics dashboard. Copy competitors' mechanics (bucketing, anti-flicker, DOM mutation — solved problems), never their surface area.
+- **"Agentic" must mean:** the loop actually closes — AI suggests → experiment runs → winner auto-promoted → next test queued → broken selectors self-heal. Human-in-the-loop tools own the rest of the market.
+- **Positioning line:** "The first CRO tool that tells you what to test, not just how to run the test."
 
----
-
-## Product Tiers
-
-| Tier | Requirement | What you get |
-|------|------------|--------------|
-| Free / Trial | URL only | AI suggestions based on page layout, copy, visual hierarchy, CTA placement — no analytics needed |
-| Paid | URL + GA connected | Suggestions backed by real user data ("34% leave here", "users who scroll past pricing convert 2x more") |
-
----
-
-## Tech Stack
+## Tech Stack (actual — trust this over any strategy doc)
 
 | Tool | Purpose |
 |------|---------|
-| **Next.js 16 (App Router)** | Dashboard, API routes, landing page — all one repo |
-| **Supabase** | Postgres database + Auth (Google OAuth) + Storage (screenshots) |
-| **Playwright** | Headless browser: crawl founder's site, take screenshots, extract DOM |
-| **Claude API** | The brain — analyzes page + analytics, returns structured suggestions |
-| **Google Analytics Data API (GA4)** | Pull pageviews, bounce rate, session data via OAuth |
-| **PostHog API** | Secondary analytics integration (v2) |
-| **Vercel** | Deployment + Vercel Cron for scheduled jobs |
-| **Resend** | Weekly digest emails to founders |
+| **Next.js 16 (App Router)** | Dashboard + landing page. Client components with plain Supabase calls — no TanStack Query, no /hooks dir |
+| **Supabase** | Postgres + Auth + Storage (`screenshots` bucket) + Edge Functions (Deno) |
+| **Browserless** (`/function` API) | Headless Chrome: screenshot + DOM extraction in one call. **Not Playwright** — it can't run on Vercel free tier |
+| **Claude API** | `claude-haiku-4-5` inside the edge function generates the CRO analysis |
+| **Vercel** | Deployment target + cron (later) |
+| **Resend** | Weekly digest emails (later) |
 
-**No Redis, no queue system, no Kubernetes.** Deliberately simple stack.
+Frontend conventions: DB access lives in `lib/*.ts` (pure async functions returning `data` or `{error}`), auth via `useAuth()` from `services/context/authContext`, types centralized in `lib/types.ts`.
 
----
+## The Analysis Pipeline
 
-## Database Schema (5 tables)
+Everything happens in **`supabase/functions/analyze-page/index.ts`** (invoked with `{url, user_id}` or `{url, report_id}`; uses the service role key, so RLS is bypassed — created rows must carry the real auth user's id or the dashboard can't see them):
 
-### `users`
-Managed mostly by Supabase Auth.
-- `id`, `email`, `created_at`
+1. **One Browserless `/function` call** runs a script in Chrome: scrolls the full page (triggers lazy loading), takes a full-page webp screenshot, and extracts elements — all from the *same rendered DOM*, so element pixel positions align with the screenshot exactly.
+2. **Element capture** (the builder's raw material): tags `h1 h2 h3 header nav footer section main button form img` + class-pattern sections (hero/cta/pricing/…) + builder additions `p a li label img` + `h1/h2/h3 span` (styled heading fragments, selectable on their own). Per element: tag, text (≤120 chars), a **unique CSS selector** (`buildSelector`: climbs to nearest unique `#id` or `body`, disambiguating with `:nth-of-type` — unique by construction, immune to Tailwind class churn), a `fallback {tag, text}` for re-finding the element after redeploys, `src` (imgs), `hasMarkup` (has child elements — a text variant would flatten them), pixel bounding box at 1440px viewport, wordCount, siblingCount. Capped at 300; skips tiny (<50×20), textless (except imgs), and fixed/sticky elements; dedupes by `tag+top+left`.
+3. **Screenshot** → Supabase Storage → public URL.
+4. **Claude analysis**: first 50 elements (simplified: id, tag, text, word_count, section, % from top) + page text + detected sections → prompt demands strict JSON: 8–10 comments, one element each, with dimension/severity/hypothesis/2 variants matching original word count. Truncation and markdown-fence handling included.
+5. **Coordinate resolution**: Claude references elements by numeric id → looked up in the element map → pixel coords converted to percentages (`top_pct` etc.) so overlays work at any display size.
+6. **Write**: `reports` updated (status, screenshot_url, page_height, viewport_width, score, summary, **elements JSONB**) + `comments` inserted. On any error: status `error` + message.
 
-### `sites`
-One row per founder's website.
-- `id`, `user_id`, `url`
-- `ga_property_id` — for GA4 OAuth connection
-- `posthog_api_key`, `posthog_project_id` — for PostHog (v2)
-- `snippet_installed` (boolean) — whether the founder has added the JS tag
-- `created_at`
+## Database Schema (current)
 
-### `crawls`
-One row per scan of a site.
-- `id`, `site_id`, `page_url`
-- `screenshot_url` — stored in Supabase Storage
-- `dom_snapshot` (JSON) — extracted DOM structure (see below)
-- `analytics_data` (JSON) — raw GA/PostHog data pulled at crawl time
-- `crawled_at`
+### `reports` — one per analysis run (integer id; migrate to UUID before launch)
+`id, user_id, url, status (pending|processing|complete|error), screenshot_url, page_height, viewport_width, overall_score, summary, error_message, elements (jsonb — full element map), created_at`
 
-**DOM snapshot shape per element:**
-```json
-{
-  "selector": "main > section:nth-child(2) > h1",
-  "tag": "h1",
-  "text": "Welcome to Our Platform",
-  "boundingBox": { "x": 120, "y": 340, "width": 800, "height": 72 },
-  "styles": { "fontSize": "48px", "color": "#111", "background": "transparent" }
-}
-```
+### `comments` — one per AI suggestion
+`id, report_id, element_id, element_tag, section, dimension, severity (critical|warning|suggestion), comment, why_it_matters, suggestion, hypothesis, variants (text[]), test_type, selector, original_value, meta {effort, impact}, confidence, top_pct, left_pct, width_pct, height_pct`
 
-### `suggestions`
-One row per AI-generated suggestion, linked to a crawl.
-- `id`, `crawl_id`, `site_id`, `page_url`
-- `selector` — CSS selector of the target element
-- `element_type` — heading | button | paragraph | image | section
-- `suggestion_text` — the human-readable recommendation
-- `variant_copy` — the suggested replacement text/content
-- `estimated_impact` — high | medium | low
-- `pin_x`, `pin_y` — coordinates on screenshot as **percentages** (0–100) for responsive overlay
-- `status` — pending | testing | applied | dismissed
-- `created_at`
+### `experiments` — one per A/B test
+`id (uuid), user_id, report_id, page_url, name, hypothesis, selector, selector_fallback (jsonb), change_type (text|style|hide|image), original_value, goal_type (click|pageview), goal_selector, goal_fallback, goal_page_path, traffic_percent, status (draft|running|paused|completed|archived), started_at, ended_at, created_at`
 
-### `experiments`
-One row per A/B test derived from a suggestion.
-- `id`, `suggestion_id`, `site_id`, `page_url`
-- `selector`, `change_type` (text | style | classes)
-- `original_value`, `variant_value`
-- `traffic_percent` — % of visitors assigned to variant
-- `status` — draft | preview | running | winner | loser | stopped
-- `conversion_selector` — CSS selector for the element a conversion click targets
-- `conversion_event_name`
-- `started_at`, `ended_at`
-- `results_json` — final stats: `{ controlConversions, variantConversions, controlVisitors, variantVisitors, significant: bool }`
+### `experiment_variants` — control is a row too
+`id (uuid), experiment_id, name (Control / Variant B…), is_control, payload (jsonb: {text} | {styles:{color,backgroundColor,fontSize}} | {src} | {hide:true} | null for control), weight (traffic %, split evenly, remainder to control), position`
 
----
+RLS: owner-only policies everywhere (`user_id = auth.uid()`, variants via join to experiments). The edge function writes with the service role.
 
-## API Routes
+### Planned with the snippet phase (deliberately not created yet)
+- `sites` — one per domain; snippet identity (`data-site-id`), `snippet_installed` heartbeat. Reports/experiments get `site_id`; multi-page support (/, /pricing, …) falls out of this since the snippet covers every page of a site.
+- `experiment_events` — `experiment_id, variant_id, visitor_id, event_type (exposure|conversion), page_url`, with a **unique index on (experiment_id, visitor_id, event_type)** so inserts are naively fire-and-forget and stats just count rows.
 
-### Onboarding
-- `POST /api/sites` — register a site, save analytics credentials
-- `POST /api/sites/[id]/crawl` — trigger Playwright crawl + analytics pull + Claude analysis → creates crawl record, stores screenshot, generates suggestions
-- `GET /api/sites/[id]/suggestions` — fetch all suggestions for overlay dashboard
+## The Experiment Builder (shipped)
 
-### Experiment Flow
-- `POST /api/experiments` — create experiment from suggestion (status: draft)
-- `POST /api/experiments/[id]/preview` — Playwright renders page with variant applied, returns screenshot for founder preview
-- `POST /api/experiments/[id]/activate` — status → running; snippet starts serving it
-- `POST /api/experiments/[id]/stop` — manual stop
+Route: `/dashboard/report/[id]/builder` (button on the report page). Works entirely off the screenshot + `reports.elements` — **no iframe**, so X-Frame-Options/CSP can never break it. Trade-off: static image (no dropdowns/hover states); the snippet-based live editor is the v2 answer.
 
-### Snippet Endpoints (must be fast — called on every page load)
-- `GET /api/snippet/config?site_id=X&page=Y` — returns active experiments for the page. **Aggressively cached (Vercel edge, 60s TTL)**
-- `POST /api/snippet/event` — receives conversion events from the snippet (backup — primary tracking is our DB)
+Flow and files:
+- **`app/dashboard/report/[id]/builder/page.tsx`** — thin route. Loads the report, owns only shared selection state: `target`, `goalElement`, `pickingGoal`.
+- **`components/experiment-builder/BuilderCanvas.tsx`** — screenshot + Figma-style hover. No per-element divs: `onMouseMove` on the container converts cursor → crawl-time page pixels, scans element boxes, highlights the **smallest box containing the point** (innermost element wins). Click bubbles the element up. Orange = testing target, emerald = goal, dashed = hover.
+- **`components/experiment-builder/BuilderSidebar.tsx`** — owns all form state. 4 steps: element → change (tabs switch by tag: img → Image/Hide, else Text/Style/Hide) → goal → details. Auto-names from element text, validates every step before enabling submit, success panel after insert.
+- **`components/experiment-builder/VariantFields.tsx`** — per-change-type inputs: text (≤3 variants + amber warning when `hasMarkup` — plain-text replacement flattens styled children; tip: select the styled span directly), style (color/background/font-size; empty = keep original), image (URL to founder-hosted image + old/new preview; no uploads/storage in v1), hide (explainer).
+- **`components/experiment-builder/GoalSection.tsx`** — click goal (pick element on canvas) or pageview goal (path like `/thank-you`).
+- **`lib/experiments.ts`** — the only DB code: `createExperiment` inserts the experiment + Control/Variant rows (even weight split, orphan cleanup on failure), status `draft`. Selectors are lifted off the chosen `PageElement`s; the UI never handles them.
 
-### Cron Jobs (Vercel Cron, run weekly)
-- `POST /api/cron/evaluate` — checks all running experiments, runs significance math, declares winners/losers, applies winner as new default
-- `POST /api/cron/analyze` — re-crawls sites, generates fresh suggestions
-- `POST /api/cron/email` — sends weekly digest to founders via Resend
+What we track per goal (deliberate limits — this is not analytics): **click goals** (visitor clicks a specific element) and **pageview goals** (visitor reaches a path — how form submits get tracked without touching the form). No bounce rate, scroll depth, or session metrics, ever.
 
----
+## The JS Snippet (next build — design settled)
 
-## The JS Snippet (what founders install)
+~100 lines vanilla JS in the founder's `<head>` with `data-site-id`:
+1. Anti-flicker: hide body (or targets) with a ~400ms failsafe; total apply time must stay <100ms.
+2. Fetch config (edge-cached per site+path; later: per-site generated script so config ships in the file).
+3. Visitor ID: first-party cookie, random UUID. **Deterministic bucketing**: `hash(visitorId + experimentId) % 100` mapped onto variant weights — sticky across pages/visits with no server round-trip, independent across experiments.
+4. Apply payload (text swap / styles / src swap / hide) + **MutationObserver re-apply** — React/Next sites wipe one-time DOM patches on hydration and client navigation.
+5. Events: exposure (denominator!) + conversion, via `sendBeacon`, deduped by the DB unique index.
+6. "Winner promotion" = snippet serves the winning variant at 100% forever (runtime mutation IS the implementation; founders can paste the winning copy into code at leisure).
 
-~60–80 lines of vanilla JS. Placed in `<head>` of the founder's site.
+Known risks: strict CSP `connect-src` blocks the fetch (document it), selector staleness after redeploys (fallback text-match now, agentic re-crawl healing later), public event endpoint needs site-id validation + rate limiting.
 
-**What it does on every page load:**
-1. Fetch config from `/api/snippet/config?site_id=X&page=Y`
-2. Assign visitor to control or variant (cookie-based for consistency across visits)
-3. If variant: find element by selector, apply the change
-4. Watch for click on `conversion_selector`, fire POST to `/api/snippet/event`
+## Statistics (the hard part of going agentic)
 
-**Anti-flicker technique:** inject CSS hiding target elements → apply changes → unhide. Total time <50ms.
+- Two-proportion z-test on unique visitors, but **never naive p-values on live-updating data** (peeking problem → false winners). Evaluate on a fixed schedule against a pre-committed sample size, or go sequential/Bayesian.
+- Enforce minimum sample (~1k exposures/variant floor; detecting +10% lift at 95%: ~5–7k/variant on a 30% baseline, 10–15k/variant on a 2–3% baseline).
+- Product implication: nudge founders toward high-baseline goals (CTA clicks, signup-page-reached) their traffic can actually resolve, and warn when it can't. Each extra variant splits traffic and stretches time-to-significance — recommend 2–3 arms max.
 
-**What we track:** visitor ID, experiment ID, variant (A or B), converted (boolean), timestamp. That's it. Five columns. We are NOT building another analytics platform.
+## Build State & Order
 
----
+**Done:** auth UI + Supabase client · analysis pipeline end-to-end (edge function) · report overlay UI (screenshot + comment pins + sidebar) · **Experiment Builder v1** (all of the above).
 
-## The Claude Prompt (core IP)
+**In progress (founder):** dashboard UI — reports list, experiment cards, overview tab.
 
-This is where the most iteration will happen. Shape:
+**Next (in order):**
+1. **Runner snippet + endpoints** — `sites` + `experiment_events` tables, `public/snippet.js`, edge-cached config endpoint, event ingest, activate flow (draft → running). Closes the core loop; unblocks the Z Fellows demo.
+2. **Results + honest stats** — per-experiment dashboard, fixed-horizon evaluation.
+3. **Agentic layer** — AI comment → one-click experiment, winner auto-promotion + next-test queueing, selector self-healing (snippet reports miss → re-crawl → re-match by fallback text).
+4. Later: compound variants (multi-element changes per variant), variant previews (Browserless render, then free via snippet edit mode), image uploads to Storage, Stripe revenue attribution, GA integration, billing.
 
-**System:** You are a senior conversion rate optimization analyst. You have deep expertise in landing page psychology, SaaS marketing, and A/B testing.
-
-**User message includes:**
-- Simplified DOM structure (tag, selector, text, bounding box position)
-- Analytics data (pageviews, bounce rate, session duration, funnel data if available)
-- Full-page screenshot (as image — Claude is multimodal)
-
-**Output:** JSON array of suggestions:
-```json
-[
-  {
-    "selector": "main > section:nth-child(1) > h1",
-    "element_type": "heading",
-    "issue": "Hero headline is generic and doesn't communicate specific value",
-    "suggestion_text": "Replace with outcome-focused headline that speaks to the ICP",
-    "variant_copy": "Close Your First 10 Enterprise Deals in 90 Days",
-    "estimated_impact": "high",
-    "pin_x": 52.3,
-    "pin_y": 18.7
-  }
-]
-```
-
-**The quality of suggestions = the quality of the product.** Everything else is plumbing.
-
----
-
-## The Overlay UI (Phase 1.3)
-
-The dashboard shows:
-- Full-page screenshot as a large image
-- Absolutely-positioned pin markers at `(pin_x%, pin_y%)` of the container
-- Pin color = impact level: red (high), yellow (medium), green (low)
-- Hover/click on pin → card showing issue, suggestion, variant copy, "Run Experiment" button
-- Sidebar listing all suggestions as cards; clicking highlights corresponding pin
-
-**Responsive pin math:** store coordinates as percentages of screenshot dimensions. Position pins with `left: pin_x%` and `top: pin_y%` on a relatively-positioned container. Stays accurate at any display size.
-
----
-
-## Experiment Tracking (How It Actually Works)
-
-We track experiments ourselves. No GA dependency for experiment measurement.
-
-**Flow:**
-1. Founder approves a suggestion → experiment created (draft)
-2. Founder previews the variant (Playwright renders it, returns screenshot)
-3. Founder activates → status = running
-4. Our snippet serves the variant to ~50% of visitors, watches for conversion click
-5. Weekly cron counts conversions per variant, runs significance math
-6. Winner declared → applied as new default → next experiment queued
-
-**Statistical significance:** basic two-proportion z-test. Simple formula, no external library needed for MVP.
-
-**What we show founders:** "We tested headline A vs headline B. B won: 6.3% vs 4.8% conversion, statistically significant after 2,000 visitors. B is now live. Here's your next experiment." A results card, not a dashboard.
-
----
-
-## Build Order
-
-### Phase 1 — The Overlay Dashboard (Weeks 1–3)
-**1.1 — Auth + Dashboard Shell**
-- Supabase Auth with Google OAuth
-- Post-login dashboard with "Add your site" flow
-- Two-field form: URL + GA property ID
-- Creates `sites` row, shows site card with "Ready to scan" status
-
-**1.2 — Crawl + Analytics Pull**
-- Playwright headless crawl: full-page screenshot + DOM extraction
-- GA4 Data API: pageviews, bounce rate, session duration, funnel data
-- Store screenshot in Supabase Storage
-- Store DOM snapshot + analytics as JSON in `crawls`
-- Feed to Claude API (DOM as text + screenshot as image)
-- Parse Claude's JSON response → insert into `suggestions`
-
-**1.3 — Overlay UI**
-- Dashboard shows screenshot with absolutely-positioned pins
-- Hover/click pins → suggestion cards
-- Sidebar list of all suggestions
-- "Run Experiment" button (grayed out — Phase 2)
-- Clicking a sidebar card highlights the pin and vice versa
-
-**Demoable at end of Phase 1:** Founder signs in, enters URL, clicks scan, waits 15–30s, sees their site with colored pins showing specific, analytics-backed suggestions.
-
----
-
-### Phase 2 — The Experiment Engine (Weeks 4–6)
-- Build the JS snippet file
-- Build `/api/snippet/config` endpoint (with edge caching)
-- Build `/api/snippet/event` endpoint
-- Experiment creation, preview (Playwright render), activation flow
-- Weekly evaluation cron job (significance math)
-- Email notifications via Resend
-
----
-
-### Phase 3 — Polish + Launch (Weeks 7–8)
-- GA OAuth flow improvement / PostHog integration
-- Better prompt engineering
-- Onboarding flow improvements
-- Landing page
-- Billing with Stripe
-
----
-
-## Key Decisions & Rationale
+## Key Decisions Log
 
 | Decision | Rationale |
 |----------|-----------|
-| GA over PostHog as primary | GA's install base is massive; almost every website has it |
-| Self-tracking experiments (not GA) | Simpler, no OAuth scope creep, GA not designed for this specific use case |
-| Store pin coords as percentages | Responsive — pins stay accurate at any display size |
-| Aggressively cache snippet config | Called on every page load; must be fast |
-| No Redis/queues for MVP | Vercel serverless + Supabase is sufficient for the scale of MVP |
-| Playwright over Firecrawl/Browserless | Full control, runs in Node.js, no extra service dependency for MVP |
+| Browserless + Supabase Edge Function (not Playwright/Vercel) | Playwright can't run on Vercel free tier; edge functions get 150s vs 10s timeout |
+| Screenshot + bounding-box builder (not iframe) | X-Frame-Options/CSP make iframes fail on exactly the sites we target; we already had aligned screenshot+DOM data |
+| `nth-of-type` path selectors anchored at nearest `#id` | Unique by construction; tag+class selectors broke on Tailwind arbitrary values (`text-[22px]`) |
+| Store `{tag, text}` fallback per element | Selector healing after founder redeploys |
+| Experiment-scoped tracking (2 event types, experiment pages only) | ~1–2% of an analytics product's event volume → Supabase suffices, unlimited-tests pricing possible |
+| Visitor-level event dedupe via DB unique index | Snippet fires naively; stats count rows; no dedup logic anywhere |
+| Image tests = URL swap, no storage | No upload pipeline/moderation; standard industry approach |
+| Elements as JSONB on reports (no separate table) | Read as one blob by the builder; never queried row-wise |
+| Coordinates stored as percentages | Overlays stay accurate at any display size |
+| reports.id is integer | Supabase default at creation; migrate to UUID before launch |
 
----
-
-## Repo Structure (Target)
+## Repo Structure (actual)
 
 ```
 /app
-  /dashboard          — main founder dashboard (sites, suggestions, experiments)
-  /api
-    /sites            — site registration + crawl trigger
-    /experiments      — experiment CRUD + activate/preview/stop
-    /snippet          — config + event endpoints (edge cached)
-    /cron             — evaluate + analyze + email
-  /auth               — Supabase Auth callback routes
-/components           — shared UI components
+  /dashboard
+    page.tsx                    — dashboard shell (sidebar nav)
+    /report/[id]
+      page.tsx                  — report view (screenshot + pins + comment sidebar)
+      /builder/page.tsx         — experiment builder
+  /signin                       — auth UI
+/components
+  /report                       — ScreenshotOverlay, CommentPin, CommentSidebar
+  /experiment-builder           — BuilderCanvas, BuilderSidebar, VariantFields, GoalSection
+  /homepage                     — Hero, Navbar
+  ProtectedRoute.tsx
 /lib
-  /playwright.ts      — crawl + DOM extraction logic
-  /claude.ts          — Claude API prompt + response parsing
-  /ga.ts              — GA4 Data API integration
-  /supabase.ts        — Supabase client
-  /stats.ts           — significance math
-/public
-  /snippet.js         — the installable JS tag (served statically)
+  types.ts                      — Report, Comment, PageElement, Experiment, ExperimentVariant, payloads
+  reports.ts                    — report/comment fetches
+  experiments.ts                — createExperiment + fetches
+  supabaseClient.ts
+/services
+  auth.ts, /context/authContext.tsx
+/supabase/functions/analyze-page/index.ts   — the entire analysis pipeline
+/public/assets                  — logos, graphics
 ```
-
-
