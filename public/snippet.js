@@ -99,9 +99,21 @@
   var VISITOR_ID = getVisitorId();
   dbg("visitor:", VISITOR_ID);
 
+  // ── Preview override (?sw_bucket=N) ───────────────────────────────────────
+  // Forces the bucket number for ALL experiments on this page load, so you can
+  // see any arm on demand: ?sw_bucket=99 → last variant, ?sw_bucket=0 →
+  // control. Preview visits record NO events — forced traffic isn't data.
+  var FORCED_BUCKET = null;
+  var forced = location.search.match(/[?&]sw_bucket=(\d+)/);
+  if (forced) {
+    FORCED_BUCKET = Math.min(99, parseInt(forced[1], 10));
+    dbg("PREVIEW MODE: bucket forced to", FORCED_BUCKET, "— events suppressed");
+  }
+
   // ── Deterministic bucketing ───────────────────────────────────────────────
   // FNV-1a hash → 0-99. Keyed per experiment so assignments are independent.
   function bucket(experimentId) {
+    if (FORCED_BUCKET !== null) return FORCED_BUCKET;
     var str = VISITOR_ID + ":" + experimentId;
     var h = 0x811c9dc5;
     for (var i = 0; i < str.length; i++) {
@@ -182,6 +194,10 @@
   // The server parses the body as JSON regardless of content type and dedupes
   // per visitor — fire-and-forget.
   function sendEvent(experimentId, variantId, eventType) {
+    if (FORCED_BUCKET !== null) {
+      dbg("event suppressed (preview mode):", eventType);
+      return;
+    }
     var body = JSON.stringify({
       experiment_id: experimentId,
       variant_id: variantId,
