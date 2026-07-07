@@ -43,7 +43,7 @@ export default function OverviewSection({ displayName, onNavigate }: Props) {
     }
 
     return (
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-y-2">
                 <h1 className="three-title tracking-tight">
                     What now, <span className="font-medium text-orange-600">@{displayName}?</span>

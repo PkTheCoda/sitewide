@@ -5,6 +5,9 @@ import { useAuth } from "@/services/context/authContext";
 import { getExperiments } from "@/lib/experiments";
 import { Experiment } from "@/lib/types";
 import ExperimentCard from "./ExperimentCard";
+import Image from "next/image";
+
+import ExperimentGraphic from "@/public/assets/dashboard-cta-2.svg"
 
 type Props = {
     onNavigate: (section: string) => void;
@@ -31,11 +34,20 @@ export default function ExperimentsSection({ onNavigate }: Props) {
 
     return (
         <div className="flex flex-col gap-4">
-            <div>
-                <h2 className="text-lg font-medium tracking-tight text-stone-800">Experiments</h2>
-                <p className="text-sm text-stone-500">
-                    Your A/B tests — drafts, live tests, and finished winners.
-                </p>
+            <div className="flex justify-between gap-2 items-start">
+
+                <div className="flex gap-x-2">
+                    {/* <Image src={ExperimentGraphic} alt="Experiments" className="h-14 w-max" /> */}
+                    <div className="flex flex-col gap-y-1">
+                        <h2 className="two-title tracking-tight font-medium">Your Experiments</h2>
+                        <p className="text-sm text-stone-500">
+                            Manage, search, and analayze your drafted or ongoing experiments.
+                        </p>
+                    </div>
+                </div>
+
+                
+
             </div>
 
             {experiments === null ? (

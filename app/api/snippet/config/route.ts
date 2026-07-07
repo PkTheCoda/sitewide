@@ -32,9 +32,13 @@ export async function GET(request: Request) {
     const { data: experiments, error } = await supabase
         .from("experiments")
         .select(
+            // `!experiment_id` disambiguates the join: experiments and
+            // experiment_variants are linked by TWO foreign keys (variants'
+            // experiment_id, and experiments' winner_variant_id), so we must
+            // name which one to follow or PostgREST errors out.
             `id, page_url, selector, selector_fallback, change_type, status,
              goal_type, goal_selector, goal_fallback, goal_page_path, winner_variant_id,
-             experiment_variants ( id, is_control, payload, weight, position )`
+             experiment_variants!experiment_id ( id, is_control, payload, weight, position )`
         )
         .eq("site_id", siteId)
         .in("status", ["running", "completed"]);

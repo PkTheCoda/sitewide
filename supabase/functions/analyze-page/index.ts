@@ -200,7 +200,21 @@ function getSectionForElement(el: any, sections: Record<string, Section>): strin
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
+// CORS: the dashboard invokes this function from the browser, which sends an
+// OPTIONS preflight first. Without these headers the browser blocks the call
+// before it's even sent (shows up as FunctionsFetchError). curl never hits
+// this because CORS is a browser-only mechanism.
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
   const { url, user_id, report_id: incoming_report_id } = await req.json();
 
   const browserlessKey = Deno.env.get('BROWSERLESS_API_KEY')!;
@@ -474,7 +488,7 @@ RULES:
       screenshot_url: screenshotUrl,
       page_height:   pageHeight,
       comments:      resolvedComments,
-    });
+    }, { headers: corsHeaders });
 
   } catch (err: any) {
     if (report_id) {
@@ -484,6 +498,6 @@ RULES:
         .eq('id', report_id);
     }
     console.error(err);
-    return Response.json({ error: err.message }, { status: 500 });
+    return Response.json({ error: err.message }, { status: 500, headers: corsHeaders });
   }
 });

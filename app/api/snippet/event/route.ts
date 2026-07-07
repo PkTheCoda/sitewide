@@ -45,9 +45,11 @@ export async function POST(request: Request) {
     // Only accept events for experiments that are actually running, and only
     // for variants that belong to them — a public endpoint must not be a way
     // to write arbitrary rows.
+    // `!experiment_id` names which of the two FKs linking these tables to
+    // follow (same ambiguity as in the config route).
     const { data: variant } = await supabase
         .from("experiment_variants")
-        .select("id, experiments!inner ( id, status )")
+        .select("id, experiments!experiment_id!inner ( id, status )")
         .eq("id", variant_id)
         .eq("experiment_id", experiment_id)
         .eq("experiments.status", "running")
