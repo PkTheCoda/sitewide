@@ -1,5 +1,13 @@
 import { supabase } from "@/lib/supabaseClient";
-import { ChangeType, Experiment, GoalType, PageElement, VariantPayload } from "@/lib/types";
+import {
+    ChangeType,
+    DailySeries,
+    DailyStat,
+    Experiment,
+    GoalType,
+    PageElement,
+    VariantPayload,
+} from "@/lib/types";
 
 // Everything the builder collects before submitting. The element objects come
 // straight from report.elements — we lift the selector + fallback off them here
@@ -197,6 +205,78 @@ export async function getExperimentEvents(experiment_id: string) {
         return { error: error.message };
     }
     return data;
+}
+
+// Day-by-day chart data for one experiment, zero-filled from the first day
+// with any data through today (UTC days everywhere — matching the counter).
+//
+// Two sources, deliberately different semantics:
+//   - views: experiment_daily_views — RAW page loads of the experiment page
+//   - exposures/conversions: experiment_events grouped by created_at day —
+//     NEW unique visitors that day, because the DB keeps only each visitor's
+//     first event. These are the same numbers the agent's z-test consumes.
+export async function getExperimentDailySeries(experiment_id: string): Promise<DailySeries | { error: string }> {
+    const [eventsRes, viewsRes] = await Promise.all([
+        supabase
+            .from("experiment_events")
+            .select("variant_id, event_type, created_at")
+            .eq("experiment_id", experiment_id),
+        supabase
+            .from("experiment_daily_views")
+            .select("variant_id, day, views")
+            .eq("experiment_id", experiment_id),
+    ]);
+
+    if (eventsRes.error) {
+        console.error(eventsRes.error);
+        return { error: eventsRes.error.message };
+    }
+    if (viewsRes.error) {
+        console.error(viewsRes.error);
+        return { error: viewsRes.error.message };
+    }
+
+    const utcDay = (iso: string) => new Date(iso).toISOString().slice(0, 10);
+
+    // bucket[variantId][day] accumulates; "" holds the cross-variant totals
+    const bucket: Record<string, Record<string, { views: number; exposures: number; conversions: number }>> = {};
+    const at = (variant: string, day: string) => {
+        bucket[variant] ??= {};
+        return (bucket[variant][day] ??= { views: 0, exposures: 0, conversions: 0 });
+    };
+
+    for (const row of viewsRes.data) {
+        at(row.variant_id, row.day).views += row.views;
+        at("", row.day).views += row.views;
+    }
+    for (const row of eventsRes.data) {
+        const day = utcDay(row.created_at);
+        const key = row.event_type === "exposure" ? "exposures" : "conversions";
+        at(row.variant_id, day)[key] += 1;
+        at("", day)[key] += 1;
+    }
+
+    // Zero-filled day range: first day with any data → today. Without this,
+    // charts silently skip quiet days and the x-axis lies about time.
+    const allDays = Object.values(bucket).flatMap((byDay) => Object.keys(byDay));
+    if (allDays.length === 0) return { days: [], byVariant: {} };
+    const first = allDays.sort()[0];
+    const today = new Date().toISOString().slice(0, 10);
+
+    const range: string[] = [];
+    for (let d = new Date(first + "T00:00:00Z"); d.toISOString().slice(0, 10) <= today; d.setUTCDate(d.getUTCDate() + 1)) {
+        range.push(d.toISOString().slice(0, 10));
+    }
+
+    const series = (variant: string): DailyStat[] =>
+        range.map((day) => ({ day, ...(bucket[variant]?.[day] ?? { views: 0, exposures: 0, conversions: 0 }) }));
+
+    const byVariant: Record<string, DailyStat[]> = {};
+    for (const variant of Object.keys(bucket)) {
+        if (variant !== "") byVariant[variant] = series(variant);
+    }
+
+    return { days: series(""), byVariant };
 }
 
 // agent decision log for an experiment, newest first

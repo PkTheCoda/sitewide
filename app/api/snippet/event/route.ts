@@ -75,5 +75,18 @@ export async function POST(request: Request) {
         return Response.json({ error: error.message }, { status: 500, headers: CORS });
     }
 
+    // Raw daily page views: the snippet fires an exposure beacon on EVERY
+    // load of the experiment page (the upsert above just ignores repeats), so
+    // each exposure beacon = one page view. Counted per variant per UTC day
+    // in experiment_daily_views — powers the dashboard's day-by-day charts.
+    // Best-effort: a failed increment must not fail the beacon.
+    if (event_type === "exposure") {
+        const { error: viewsError } = await supabase.rpc("increment_daily_views", {
+            p_experiment_id: experiment_id,
+            p_variant_id: variant_id,
+        });
+        if (viewsError) console.error("daily views increment failed:", viewsError);
+    }
+
     return Response.json({ ok: true }, { headers: CORS });
 }

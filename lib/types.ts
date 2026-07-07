@@ -178,6 +178,35 @@ export type ExperimentEvent = {
     created_at: string;
 };
 
+// Raw page-view counter, one row per (experiment, variant, UTC day). Bumped
+// by /api/snippet/event on every exposure beacon (which the snippet sends on
+// every load of the experiment page — experiment_events only keeps the first
+// one per visitor, this table counts them all).
+export type ExperimentDailyView = {
+    experiment_id: string;
+    variant_id: string;
+    day: string; // "YYYY-MM-DD", UTC
+    views: number;
+};
+
+// One point in a day-by-day chart series. exposures/conversions are NEW
+// unique visitors that day (first-ever exposure / first-ever conversion —
+// exactly what the z-test consumes); views are raw page loads.
+export type DailyStat = {
+    day: string; // "YYYY-MM-DD", UTC
+    views: number;
+    exposures: number;
+    conversions: number;
+};
+
+// Chart-ready daily data for one experiment: totals across all variants,
+// plus the same series per variant (for layered/compare charts). All series
+// cover the same zero-filled day range, oldest first.
+export type DailySeries = {
+    days: DailyStat[];
+    byVariant: Record<string, DailyStat[]>;
+};
+
 // One decision the agent made, kept as an audit trail the founder can read.
 export type AgentAction = {
     id: number;
