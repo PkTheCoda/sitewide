@@ -3,27 +3,37 @@
  *
  * Install: <script defer src="https://YOUR-SITEWIDE-DOMAIN/snippet.js" data-site-id="YOUR_SITE_ID"></script>
  *
+ * Debug mode: add ?sw_debug=1 to any URL on the site (or run
+ * `localStorage.sw_debug = "1"` in the console) and the snippet logs every
+ * step — visitor id, config source (cache vs network), bucketing decisions,
+ * element applies, events, and why/when the page was released from hiding.
+ *
  * What it does on every page load:
  *   1. Reads/creates a first-party visitor id cookie (sw_vid).
  *   2. Loads the site's experiment config — from localStorage cache when
- *      available (instant, no flicker), from the network on first visit.
- *      The cache is refreshed in the background on every load, so config
- *      changes (activate/pause/winner) take effect one page load later.
+ *      available (instant), from the network on first visit. The cache is
+ *      refreshed in the background on every load, so config changes take
+ *      effect one page load later.
  *   3. Assigns the visitor to a variant DETERMINISTICALLY — hash(visitorId +
  *      experimentId) mapped onto variant weights. Same visitor, same variant,
- *      on every page and every visit, with zero stored assignments.
- *   4. Applies the variant's change (text / styles / image src / hide) and
- *      re-applies it via MutationObserver — React/Next sites wipe one-time
- *      DOM patches on hydration and client-side navigation.
- *   5. Reports exposure + conversion events as text/plain beacons ("simple
- *      requests": no CORS preflight, deliverable from any site). The server
- *      dedupes per visitor, so events are fire-and-forget.
+ *      every page, every visit, no stored assignments.
+ *   4. Applies the variant's change and re-applies via MutationObserver —
+ *      client-rendered React/Next sites build the DOM late and rewrite it on
+ *      hydration, so one-shot patching is not enough.
+ *   5. Reports exposure + conversion events as text/plain beacons (CORS
+ *      "simple requests" — no preflight). The server dedupes per visitor.
  *
- * Anti-flicker strategy:
- *   - Cached config (every visit after the first): hide ONLY the elements the
- *     experiments target, apply instantly, unhide. No full-page blank.
- *   - No cache (first visit ever): hide the page until config arrives, with a
- *     400ms failsafe so a slow/failed fetch never blanks the site for long.
+ * Anti-flicker strategy (the important part):
+ *   - Target elements stay hidden (visibility:hidden — layout preserved)
+ *     until their change is ACTUALLY applied. On client-rendered apps the
+ *     element may not exist for hundreds of ms; hiding is by CSS rule, so it
+ *     covers the element from the instant the framework creates it — the
+ *     visitor never sees the original text flash before the swap.
+ *   - Whole-page hide is used only on a visitor's first-ever load (no cache
+ *     yet), and only until the config arrives — then it downgrades to the
+ *     element-scoped hide above.
+ *   - A 400ms failsafe releases everything no matter what: a slow fetch or a
+ *     missing element can never hold the page hostage.
  */
 (function () {
   "use strict";
@@ -35,21 +45,44 @@
   var API = new URL(script.src).origin;
   var CACHE_KEY = "sw_cfg_" + SITE_ID;
 
-  // ── Hiding / unhiding (anti-flicker) ──────────────────────────────────────
-  var hideStyle = null;
-  var unhidden = false;
-  function hide(cssText) {
-    if (unhidden || hideStyle) return;
-    hideStyle = document.createElement("style");
-    hideStyle.textContent = cssText;
-    document.documentElement.appendChild(hideStyle);
+  // ── Debug logging (?sw_debug=1 or localStorage.sw_debug="1") ─────────────
+  var DEBUG = false;
+  try {
+    DEBUG = /[?&]sw_debug=1/.test(location.search) || localStorage.getItem("sw_debug") === "1";
+  } catch (e) {
+    /* storage blocked — debug stays off */
   }
-  function unhide() {
-    unhidden = true;
-    if (hideStyle && hideStyle.parentNode) hideStyle.parentNode.removeChild(hideStyle);
-    hideStyle = null;
+  function dbg() {
+    if (!DEBUG) return;
+    var args = ["[sitewide]"];
+    for (var i = 0; i < arguments.length; i++) args.push(arguments[i]);
+    console.log.apply(console, args);
   }
-  setTimeout(unhide, 400); // failsafe: never hold the page hostage
+
+  // ── Hiding / releasing (anti-flicker) ─────────────────────────────────────
+  // One <style> element whose contents we can swap: starts as a whole-page
+  // hide on first visit, downgrades to element-only hiding once we know the
+  // selectors, and is removed entirely on release.
+  var hideEl = null;
+  var released = false;
+  function setHide(cssText) {
+    if (released) return;
+    if (!hideEl) {
+      hideEl = document.createElement("style");
+      document.documentElement.appendChild(hideEl);
+    }
+    hideEl.textContent = cssText;
+  }
+  function release(reason) {
+    if (released) return;
+    released = true;
+    if (hideEl && hideEl.parentNode) hideEl.parentNode.removeChild(hideEl);
+    hideEl = null;
+    dbg("released page (" + reason + ")");
+  }
+  setTimeout(function () {
+    release("400ms failsafe");
+  }, 400);
 
   // ── Visitor identity ──────────────────────────────────────────────────────
   function getVisitorId() {
@@ -64,6 +97,7 @@
     return vid;
   }
   var VISITOR_ID = getVisitorId();
+  dbg("visitor:", VISITOR_ID);
 
   // ── Deterministic bucketing ───────────────────────────────────────────────
   // FNV-1a hash → 0-99. Keyed per experiment so assignments are independent.
@@ -145,9 +179,8 @@
   // ── Event reporting ───────────────────────────────────────────────────────
   // Body is a PLAIN STRING → the request is a CORS "simple request" (no
   // preflight), which sendBeacon can always deliver, even cross-origin.
-  // (A Blob typed application/json would force a preflighted beacon — flaky.)
-  // The server parses the body as JSON regardless of content type, and
-  // dedupes per visitor — so this is fire-and-forget.
+  // The server parses the body as JSON regardless of content type and dedupes
+  // per visitor — fire-and-forget.
   function sendEvent(experimentId, variantId, eventType) {
     var body = JSON.stringify({
       experiment_id: experimentId,
@@ -168,6 +201,7 @@
     if (!sent) {
       fetch(url, { method: "POST", body: body, keepalive: true }).catch(function () {});
     }
+    dbg("event sent:", eventType, "(experiment " + experimentId.slice(0, 8) + "…)");
   }
 
   // ── Path matching (exact path, trailing-slash tolerant) ──────────────────
@@ -203,10 +237,19 @@
     );
   }
 
+  // CSS that hides exactly the elements the given pending changes target.
+  function hideCssFor(pending) {
+    var selectors = [];
+    pending.forEach(function (item) {
+      if (item.exp.selector) selectors.push(item.exp.selector);
+    });
+    return selectors.length ? selectors.join(",") + "{visibility:hidden !important}" : "";
+  }
+
   // ── Core: act on a config (apply changes, wire goals, fire events) ───────
   function run(config) {
     var experiments = (config && config.experiments) || [];
-    var pending = []; // changes to apply/re-apply as the DOM settles
+    var pending = []; // { exp, payload, applied } — applied flips on first success
 
     experiments.forEach(function (exp) {
       // Completed experiment with a winner: serve the winner to everyone,
@@ -218,7 +261,8 @@
             if (exp.variants[i].id === exp.winner_variant_id) winner = exp.variants[i];
           }
           if (winner && winner.payload) {
-            pending.push({ exp: exp, payload: winner.payload });
+            pending.push({ exp: exp, payload: winner.payload, applied: false });
+            dbg("serving promoted winner for", exp.id.slice(0, 8) + "…");
           }
         }
         return;
@@ -226,12 +270,22 @@
 
       if (exp.status !== "running") return;
       var variant = pickVariant(exp);
+      dbg(
+        "experiment",
+        exp.id.slice(0, 8) + "…",
+        "bucket=" + bucket(exp.id),
+        "→",
+        variant.is_control ? "CONTROL" : "VARIANT",
+        "(" + variant.id.slice(0, 8) + "…)"
+      );
 
       // On the experiment page: apply the change, count the exposure.
       // (If this config came from a stale cache and the experiment was
       // paused meanwhile, the server rejects the events — data stays clean.)
       if (pathMatches(exp.page_path)) {
-        if (variant.payload) pending.push({ exp: exp, payload: variant.payload });
+        if (variant.payload) {
+          pending.push({ exp: exp, payload: variant.payload, applied: false });
+        }
         sendEvent(exp.id, variant.id, "exposure");
 
         // Click goal: capture-phase listener, works on late-rendered elements.
@@ -262,23 +316,39 @@
     });
 
     if (pending.length === 0) {
-      unhide();
+      release("no changes on this page");
       return;
     }
 
-    // Apply now, re-apply as the framework hydrates/re-renders.
+    // From here on, hide ONLY the elements we're about to change. On
+    // client-rendered apps (React/Vite) these elements may not exist yet —
+    // a CSS rule covers them from the instant the framework creates them.
+    setHide(hideCssFor(pending));
+
+    // Returns true when every pending change has been applied at least once.
     function applyAll() {
+      var allApplied = true;
       pending.forEach(function (item) {
         var el = findElement(item.exp.selector, item.exp.selector_fallback);
-        if (el) applyPayload(el, item.payload);
+        if (el) {
+          applyPayload(el, item.payload);
+          if (!item.applied) {
+            item.applied = true;
+            dbg("applied change to", item.exp.selector);
+          }
+        }
+        if (!item.applied) allApplied = false;
       });
+      return allApplied;
     }
 
+    // Apply now; keep re-applying as the framework renders/hydrates/re-renders.
+    // Only release the hide once everything is actually applied (or the 400ms
+    // failsafe fires) — releasing earlier would flash the original content.
     function start() {
-      applyAll();
-      unhide();
+      if (applyAll()) release("all changes applied");
       var observer = new MutationObserver(function () {
-        applyAll(); // idempotent — checks current values before touching DOM
+        if (applyAll() && !released) release("all changes applied (late render)");
       });
       observer.observe(document.body, {
         childList: true,
@@ -298,31 +368,26 @@
   var cached = readCache();
 
   if (cached) {
-    // Repeat visit: no full-page hide. Hide only the elements experiments on
-    // THIS page will touch, apply from cache instantly, unhide. Then refresh
-    // the cache in the background so the NEXT load sees config changes.
-    var selectors = [];
-    (cached.experiments || []).forEach(function (exp) {
-      var active =
-        exp.status === "running" || (exp.status === "completed" && exp.winner_variant_id);
-      if (active && exp.selector && pathMatches(exp.page_path)) {
-        selectors.push(exp.selector);
-      }
-    });
-    if (selectors.length) {
-      hide(selectors.join(",") + "{visibility:hidden !important}");
-    }
+    dbg("config source: localStorage cache (refreshing in background)");
     run(cached);
-    fetchConfig().then(writeCache).catch(function () {});
+    fetchConfig()
+      .then(function (config) {
+        writeCache(config);
+        dbg("background config refresh done — takes effect next page load");
+      })
+      .catch(function () {});
   } else {
-    // First visit ever: nothing to go on — hide the page until config
-    // arrives (400ms cap). Every later visit takes the cached path above.
-    hide("html{opacity:0 !important}");
+    dbg("config source: network (first visit on this device)");
+    // Nothing to go on yet — hide the page until config arrives (400ms cap).
+    // run() immediately downgrades this to element-only hiding.
+    setHide("html{opacity:0 !important}");
     fetchConfig()
       .then(function (config) {
         writeCache(config);
         run(config);
       })
-      .catch(unhide);
+      .catch(function () {
+        release("config fetch failed");
+      });
   }
 })();
