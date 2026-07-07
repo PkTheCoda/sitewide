@@ -49,6 +49,10 @@ export type PageElement = {
     // Optional: only present on reports crawled after the image/rich-text update
     src?: string | null;
     hasMarkup?: boolean;
+    // Text of each text node inside the element, in document order (only when
+    // the element has child markup, e.g. an h1 with a gradient span). Lets the
+    // builder edit rich text part-by-part instead of flattening it.
+    textParts?: string[] | null;
     top: number;
     left: number;
     width: number;
@@ -104,6 +108,10 @@ export type StyleChanges = {
 // What the snippet applies for a variant. Control rows have payload = null.
 export type VariantPayload =
     | { text: string }
+    // Rich-text swap: one string per text node of the element, in document
+    // order. The snippet rewrites text nodes in place, so inner spans keep
+    // their styling. Falls back to a flat replace if the markup changed.
+    | { textParts: string[] }
     | { styles: StyleChanges }
     | { hide: true }
     | { src: string } // image swap — the founder hosts the replacement image

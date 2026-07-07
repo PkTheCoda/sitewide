@@ -159,9 +159,37 @@
   }
 
   // ── Applying changes (idempotent — safe to call on every mutation) ────────
+  // Rich-text swap: one payload string per non-whitespace text node of the
+  // element, in document order. Rewriting text NODES (not textContent) keeps
+  // inner spans — and their gradient/color styling — intact. Each node's own
+  // leading/trailing whitespace is preserved so words don't jam together.
+  // If the markup changed since capture (node count mismatch after a
+  // redeploy), fall back to a flat replace — join with spaces, which HTML
+  // rendering collapses safely.
+  function applyTextParts(el, parts) {
+    var nodes = [];
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+    var n;
+    while ((n = walker.nextNode())) {
+      if (n.nodeValue && n.nodeValue.replace(/\s+/g, "")) nodes.push(n);
+    }
+    if (nodes.length !== parts.length) {
+      var flat = parts.join(" ");
+      if (el.textContent !== flat) el.textContent = flat;
+      return;
+    }
+    for (var i = 0; i < nodes.length; i++) {
+      var cur = nodes[i].nodeValue;
+      var next = cur.match(/^\s*/)[0] + parts[i] + cur.match(/\s*$/)[0];
+      if (cur !== next) nodes[i].nodeValue = next;
+    }
+  }
+
   function applyPayload(el, payload) {
     if (!payload) return;
-    if (payload.text !== undefined && el.textContent !== payload.text) {
+    if (payload.textParts !== undefined) {
+      applyTextParts(el, payload.textParts);
+    } else if (payload.text !== undefined && el.textContent !== payload.text) {
       el.textContent = payload.text;
     }
     if (payload.src !== undefined && el.getAttribute("src") !== payload.src) {

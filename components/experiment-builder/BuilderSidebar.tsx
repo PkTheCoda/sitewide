@@ -60,6 +60,10 @@ export default function BuilderSidebar({
 
     const [changeType, setChangeType] = useState<ChangeType>("text");
     const [textVariants, setTextVariants] = useState<string[]>([""]);
+    // Rich-text mode: elements captured with textParts (an h1 with a gradient
+    // span…) get one input per part instead of one flat textarea, so inner
+    // styling survives. partVariants[variantIdx][partIdx] mirrors textParts.
+    const [partVariants, setPartVariants] = useState<string[][]>([]);
     const [styles, setStyles] = useState<StyleChanges>({});
     const [imageSrc, setImageSrc] = useState("");
     const [goalType, setGoalType] = useState<GoalType>("click");
@@ -88,14 +92,33 @@ export default function BuilderSidebar({
         }
     }, [target]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Re-seed the per-part editor whenever the selection changes — part counts
+    // differ per element. Starts with one variant prefilled with the original
+    // parts, so the founder only edits the piece they want to test.
+    useEffect(() => {
+        setPartVariants(
+            target?.textParts && target.textParts.length > 1 ? [[...target.textParts]] : []
+        );
+    }, [target]);
+
     const cleanedStyles: StyleChanges = Object.fromEntries(
         Object.entries(styles).filter(([, v]) => v && v.trim())
     );
     const filledTextVariants = textVariants.map((v) => v.trim()).filter(Boolean);
 
+    // Rich-text variants count as filled once they differ from the original —
+    // they start prefilled with the original parts, so "non-empty" alone would
+    // let an unchanged copy of the control through.
+    const richParts = target?.textParts && target.textParts.length > 1 ? target.textParts : null;
+    const originalJoined = richParts?.map((p) => p.trim()).join(" ") ?? "";
+    const filledPartVariants = partVariants
+        .map((parts) => parts.map((p) => p.trim()))
+        .filter((parts) => parts.some(Boolean) && parts.join(" ") !== originalJoined);
+
     const changeValid =
         changeType === "hide" ||
-        (changeType === "text" && filledTextVariants.length > 0) ||
+        (changeType === "text" &&
+            (richParts ? filledPartVariants.length > 0 : filledTextVariants.length > 0)) ||
         (changeType === "style" && Object.keys(cleanedStyles).length > 0) ||
         (changeType === "image" && isValidImageUrl(imageSrc));
     const goalValid =
@@ -110,7 +133,9 @@ export default function BuilderSidebar({
 
         const variant_payloads: VariantPayload[] =
             changeType === "text"
-                ? filledTextVariants.map((text) => ({ text }))
+                ? richParts
+                    ? filledPartVariants.map((textParts) => ({ textParts }))
+                    : filledTextVariants.map((text) => ({ text }))
                 : changeType === "style"
                   ? [{ styles: cleanedStyles }]
                   : changeType === "image"
@@ -143,6 +168,7 @@ export default function BuilderSidebar({
         setCreatedId(null);
         setSubmitError(null);
         setTextVariants([""]);
+        setPartVariants([]);
         setStyles({});
         setImageSrc("");
         setGoalPagePath("");
@@ -264,6 +290,8 @@ export default function BuilderSidebar({
                                 target={target}
                                 textVariants={textVariants}
                                 onTextVariantsChange={setTextVariants}
+                                partVariants={partVariants}
+                                onPartVariantsChange={setPartVariants}
                                 styles={styles}
                                 onStylesChange={setStyles}
                                 imageSrc={imageSrc}

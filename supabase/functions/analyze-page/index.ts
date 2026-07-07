@@ -123,6 +123,24 @@ export default async function({ page, context }) {
         const rawSrc = tag === 'img' ? (el.currentSrc || el.src || '') : '';
         const src = rawSrc && !rawSrc.startsWith('data:') ? rawSrc.slice(0, 500) : null;
 
+        // Rich-text support: the text of each text node inside the element,
+        // in document order (an h1 with a gradient span yields e.g.
+        // ["Ship", "faster", "today"]). The builder shows one input per part
+        // and the snippet rewrites text nodes in place — inner spans keep
+        // their styling. Only captured when there IS inner markup; 2-8 parts
+        // keeps the editor sane and the payload small.
+        let textParts = null;
+        if (el.children.length > 0 && text) {
+          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+          const parts = [];
+          let node;
+          while ((node = walker.nextNode()) && parts.length <= 8) {
+            const t = node.nodeValue && node.nodeValue.trim();
+            if (t) parts.push(t.slice(0, 200));
+          }
+          if (parts.length >= 2 && parts.length <= 8) textParts = parts;
+        }
+
         results.push({
           id:          nextId++,
           tag,
@@ -138,6 +156,7 @@ export default async function({ page, context }) {
           // Has child elements (spans, links…) — a plain-text variant would
           // flatten them, so the builder warns before a text test.
           hasMarkup:   el.children.length > 0,
+          textParts,
           top, left,
           width:       Math.round(rect.width),
           height:      Math.round(rect.height),

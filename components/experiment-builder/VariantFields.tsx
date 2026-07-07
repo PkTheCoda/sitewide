@@ -13,6 +13,10 @@ type Props = {
     target: PageElement;
     textVariants: string[];
     onTextVariantsChange: (variants: string[]) => void;
+    // Rich-text mode (elements with textParts): one string per text node per
+    // variant. Seeded by BuilderSidebar with the original parts.
+    partVariants: string[][];
+    onPartVariantsChange: (variants: string[][]) => void;
     styles: StyleChanges;
     onStylesChange: (styles: StyleChanges) => void;
     imageSrc: string;
@@ -32,12 +36,15 @@ export default function VariantFields({
     target,
     textVariants,
     onTextVariantsChange,
+    partVariants,
+    onPartVariantsChange,
     styles,
     onStylesChange,
     imageSrc,
     onImageSrcChange,
 }: Props) {
     const originalText = target.text ?? target.alt;
+    const richParts = target.textParts && target.textParts.length > 1 ? target.textParts : null;
     if (changeType === "hide") {
         return (
             <p className="text-xs text-slate-500 leading-relaxed bg-slate-50 border border-slate-200 rounded-md p-3">
@@ -121,7 +128,77 @@ export default function VariantFields({
         );
     }
 
-    // text change
+    // text change — rich mode: one input per text part, styling preserved
+    if (richParts) {
+        return (
+            <div className="flex flex-col gap-2">
+                {originalText && (
+                    <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 py-2 px-3 rounded-md border border-slate-200">
+                        {originalText}
+                    </p>
+                )}
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                    This element has {richParts.length} styled parts. Edit any of
+                    them — each part keeps its original styling (colors,
+                    gradients, links).
+                </p>
+                {partVariants.map((parts, idx) => (
+                    <div key={idx} className="flex items-start gap-2">
+                        <div className="flex-1 flex flex-col gap-1.5 bg-white py-2 px-3 rounded-md border border-dashed border-slate-300">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-400 font-medium">
+                                Variant {String.fromCharCode(66 + idx)}
+                            </span>
+                            {parts.map((part, p) => (
+                                <input
+                                    key={p}
+                                    type="text"
+                                    value={part}
+                                    onChange={(e) => {
+                                        const next = partVariants.map((v) => [...v]);
+                                        next[idx][p] = e.target.value;
+                                        onPartVariantsChange(next);
+                                    }}
+                                    placeholder={richParts[p]}
+                                    className={`text-xs leading-relaxed py-1.5 px-2.5 rounded-md border focus:outline-none focus:border-orange-600 placeholder-slate-400 transition-colors ${
+                                        part.trim() !== richParts[p]
+                                            ? "text-orange-900 bg-orange-50 border-orange-200"
+                                            : "text-slate-700 bg-slate-50 border-slate-200"
+                                    }`}
+                                />
+                            ))}
+                        </div>
+                        {partVariants.length > 1 && (
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    onPartVariantsChange(partVariants.filter((_, i) => i !== idx))
+                                }
+                                className="text-slate-300 hover:text-red-500 text-sm px-1 pt-2 transition-colors"
+                                aria-label={`Remove variant ${idx + 1}`}
+                            >
+                                ✕
+                            </button>
+                        )}
+                    </div>
+                ))}
+                {partVariants.length < MAX_VARIANTS && (
+                    <button
+                        type="button"
+                        onClick={() => onPartVariantsChange([...partVariants, [...richParts]])}
+                        className="self-start text-xs text-slate-500 hover:text-orange-600 transition-colors"
+                    >
+                        + Add another variant
+                    </button>
+                )}
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Variants that still match the original don&apos;t count — change
+                    at least one part. Each variant splits your traffic further.
+                </p>
+            </div>
+        );
+    }
+
+    // text change — flat mode (no inner markup, or report predates textParts)
     return (
         <div className="flex flex-col gap-2">
             {originalText && (
@@ -133,8 +210,9 @@ export default function VariantFields({
                 <p className="text-[11px] text-amber-800 leading-relaxed bg-amber-50 border border-amber-200 rounded-md py-2 px-3">
                     This element contains styled parts inside it (like a colored word or
                     a link). A text variant replaces everything as plain text, so that
-                    styling is lost. Tip: you can often click the styled part itself on
-                    the page and test just that piece.
+                    styling is lost. Re-run the analysis on this page to unlock
+                    part-by-part editing, or click the styled part itself and test
+                    just that piece.
                 </p>
             )}
             {textVariants.map((variant, idx) => (

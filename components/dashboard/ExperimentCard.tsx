@@ -22,6 +22,7 @@ const CHANGE_LABEL: Record<string, string> = {
 function payloadSummary(payload: VariantPayload): string {
     if (!payload) return "Original (unchanged)";
     if ("text" in payload) return `“${payload.text}”`;
+    if ("textParts" in payload) return `“${payload.textParts.filter(Boolean).join(" ")}”`;
     if ("src" in payload) return payload.src;
     if ("hide" in payload) return "Element hidden";
     if ("styles" in payload)
