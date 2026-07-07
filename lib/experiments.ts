@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabaseClient";
-import { ChangeType, GoalType, PageElement, VariantPayload } from "@/lib/types";
+import { ChangeType, Experiment, GoalType, PageElement, VariantPayload } from "@/lib/types";
 
 // Everything the builder collects before submitting. The element objects come
 // straight from report.elements — we lift the selector + fallback off them here
@@ -28,8 +28,12 @@ function splitWeights(groupCount: number): number[] {
     return weights;
 }
 
-// create an experiment (status: draft) with its control + variant rows
+// create an experiment (status: draft) with its control + variant rows.
+// Two inserts: 1 row into `experiments` (what element, what goal, who owns it)
+// then N rows into `experiment_variants` (control + each version to test).
 export async function createExperiment(input: NewExperiment) {
+    // Step 1 — the experiment row. Selector + fallback are copied off the
+    // PageElement the user clicked, so the builder UI never handles selectors.
     const { data: experiment, error } = await supabase
         .from("experiments")
         .insert({
@@ -59,6 +63,8 @@ export async function createExperiment(input: NewExperiment) {
         return { error: error.message };
     }
 
+    // Step 2 — the variant rows. Control always exists and always comes first
+    // (position 0, payload null = "change nothing for these visitors").
     const weights = splitWeights(input.variant_payloads.length + 1);
     const variantRows = [
         {
@@ -106,6 +112,105 @@ export async function getExperiments(user_id: string) {
         return { error: error.message };
     }
 
+    return data;
+}
+
+// activate a draft/paused experiment. Ensures a `sites` row exists for the
+// experiment's domain (the snippet identifies itself by site id), links it,
+// and flips status to running. Returns the site_id for install instructions.
+export async function activateExperiment(experiment: Experiment) {
+    let domain: string;
+    try {
+        domain = new URL(experiment.page_url).hostname;
+    } catch {
+        return { error: `Invalid page URL: ${experiment.page_url}` };
+    }
+
+    // find-or-create the site for this domain
+    let site_id = experiment.site_id;
+    if (!site_id) {
+        const { data: existing } = await supabase
+            .from("sites")
+            .select("id")
+            .eq("user_id", experiment.user_id)
+            .eq("domain", domain)
+            .maybeSingle();
+
+        if (existing) {
+            site_id = existing.id;
+        } else {
+            const { data: created, error: siteError } = await supabase
+                .from("sites")
+                .insert({ user_id: experiment.user_id, domain })
+                .select("id")
+                .single();
+            if (siteError) {
+                console.error(siteError);
+                return { error: siteError.message };
+            }
+            site_id = created.id;
+        }
+    }
+
+    const { error } = await supabase
+        .from("experiments")
+        .update({
+            site_id,
+            status: "running",
+            started_at: experiment.started_at ?? new Date().toISOString(),
+        })
+        .eq("id", experiment.id);
+
+    if (error) {
+        console.error(error);
+        return { error: error.message };
+    }
+
+    return { site_id: site_id as string };
+}
+
+// pause a running experiment (snippet stops serving it within the cache TTL)
+export async function pauseExperiment(experiment_id: string) {
+    const { error } = await supabase
+        .from("experiments")
+        .update({ status: "paused" })
+        .eq("id", experiment_id);
+
+    if (error) {
+        console.error(error);
+        return { error: error.message };
+    }
+    return { ok: true };
+}
+
+// raw events for an experiment — the dashboard aggregates these client-side
+// (unique-per-visitor is guaranteed by the DB index, so counting rows is
+// counting visitors)
+export async function getExperimentEvents(experiment_id: string) {
+    const { data, error } = await supabase
+        .from("experiment_events")
+        .select("variant_id, event_type")
+        .eq("experiment_id", experiment_id);
+
+    if (error) {
+        console.error(error);
+        return { error: error.message };
+    }
+    return data;
+}
+
+// agent decision log for an experiment, newest first
+export async function getAgentActions(experiment_id: string) {
+    const { data, error } = await supabase
+        .from("agent_actions")
+        .select("*")
+        .eq("experiment_id", experiment_id)
+        .order("created_at", { ascending: false });
+
+    if (error) {
+        console.error(error);
+        return { error: error.message };
+    }
     return data;
 }
 

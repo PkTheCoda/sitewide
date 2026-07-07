@@ -13,6 +13,11 @@ type Props = {
     onPathChange: (path: string) => void;
 };
 
+// Step 3 in the builder sidebar: how a conversion gets counted.
+//   click    → the user picks an element on the canvas (pickingGoal mode is
+//              owned by the page, since the canvas needs to know about it)
+//   pageview → the user types a path like /thank-you; reaching it converts.
+//              This is how form submits are tracked without touching the form.
 export default function GoalSection({
     goalType,
     onGoalTypeChange,

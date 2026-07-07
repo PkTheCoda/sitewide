@@ -468,6 +468,7 @@ RULES:
     }
 
     return Response.json({
+      report_id,
       overall_score: analysis.overall_score,
       summary:       analysis.summary,
       screenshot_url: screenshotUrl,

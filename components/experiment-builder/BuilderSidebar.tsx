@@ -13,7 +13,7 @@ import {
     VariantPayload,
 } from "@/lib/types";
 import VariantFields, { isValidImageUrl } from "./VariantFields";
-import GoalSection from "./GoalSection";4
+import GoalSection from "./GoalSection";
 
 import gridPattern from "@/public/assets/grid-pattern-ES1.png"
 
@@ -42,6 +42,11 @@ const IMAGE_CHANGE_TYPES: { value: ChangeType; label: string }[] = [
     { value: "hide", label: "Hide" },
 ];
 
+// The builder's left panel — owns ALL form state (change type, variant copy,
+// styles, image URL, goal, name, hypothesis). The page only owns what the
+// canvas also needs: which elements are selected and whether we're picking a
+// goal. On submit it assembles variant payloads and calls createExperiment,
+// which writes the experiments + experiment_variants rows (status: draft).
 export default function BuilderSidebar({
     report,
     target,

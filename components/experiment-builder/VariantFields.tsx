@@ -19,6 +19,14 @@ type Props = {
     onImageSrcChange: (src: string) => void;
 };
 
+// Step 2's body in the builder sidebar: renders the right inputs for the
+// selected change type. This component is pure UI — all state lives in
+// BuilderSidebar and flows down through props:
+//   text  → original copy + up to MAX_VARIANTS textareas (+ a warning when the
+//           element has styled children that a plain-text swap would flatten)
+//   style → color / background / font-size (empty field = keep original)
+//   image → URL input + current-vs-new preview (founder hosts the image)
+//   hide  → no inputs, just an explainer
 export default function VariantFields({
     changeType,
     target,

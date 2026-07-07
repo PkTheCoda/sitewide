@@ -1,3 +1,24 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// DATABASE MAP — every type below mirrors a Supabase table.
+//
+//   auth.users (Supabase-managed)
+//    ├── reports        "I analyzed this URL once"        (user_id)
+//    │    └── comments  "AI found these issues"           (report_id)
+//    ├── sites          "I own this domain"               (user_id)
+//    └── experiments    "I'm running this A/B test"       (user_id, report_id, site_id)
+//         ├── experiment_variants  "the versions"         (experiment_id)
+//         ├── experiment_events    "who saw/clicked what" (experiment_id, variant_id)
+//         └── agent_actions        "what the agent decided" (experiment_id)
+//
+// Ownership flows down from auth.users: RLS policies let a logged-in user see
+// only rows that trace back to their user_id (directly, or through a join).
+// The edge function and API routes write with the service role key, which
+// bypasses RLS — that's why rows must always carry the REAL user's id.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// One analysis run of one URL. Created when the user hits "Analyze";
+// filled in by the analyze-page edge function as it progresses
+// (pending → processing → complete/error).
 export type Report = {
     id: string;
     user_id: string;
@@ -38,6 +59,9 @@ export type PageElement = {
 
 export type Severity = "critical" | "warning" | "suggestion";
 
+// One AI-generated CRO finding, belonging to a report. The *_pct fields place
+// the highlight box on the screenshot (percentages of full page dimensions,
+// so they stay accurate at any display size).
 export type Comment = {
     id: string;
     report_id: string;
@@ -85,10 +109,31 @@ export type VariantPayload =
     | { src: string } // image swap — the founder hosts the replacement image
     | null;
 
+// One row per DOMAIN the user runs experiments on (not per page!). Created
+// automatically the first time an experiment on that domain is activated.
+// The snippet script tag carries this row's id (data-site-id) — that's how a
+// page load on the founder's site finds ITS experiments in OUR database.
+export type Site = {
+    id: string;
+    user_id: string;
+    domain: string;
+    name: string | null;
+    snippet_installed: boolean;
+    snippet_last_seen_at: string | null;
+    created_at: string;
+};
+
+// One A/B test. Points three ways:
+//   report_id — which analysis it was built from (null if that report is deleted)
+//   site_id   — which domain serves it (null until first activation)
+//   user_id   — who owns it (RLS key)
+// The element being tested lives here as selector + fallback; WHAT each
+// version shows lives in experiment_variants.payload.
 export type Experiment = {
     id: string;
     user_id: string;
     report_id: number | null;
+    site_id: string | null;
     page_url: string;
     name: string;
     hypothesis: string | null;
@@ -102,11 +147,41 @@ export type Experiment = {
     goal_page_path: string | null;
     traffic_percent: number;
     status: ExperimentStatus;
+    winner_variant_id: string | null;
+    min_sample_size: number;
+    auto_promote: boolean;
     started_at: string | null;
     ended_at: string | null;
     created_at: string;
 };
 
+// One "a visitor saw variant X" (exposure) or "a visitor converted on variant
+// X" (conversion) record. A unique DB index on (experiment_id, visitor_id,
+// event_type) guarantees max ONE of each per visitor per experiment — so
+// counting rows literally counts unique visitors. This table is the agent's
+// entire perception of the world.
+export type ExperimentEvent = {
+    id: number;
+    experiment_id: string;
+    variant_id: string;
+    visitor_id: string;
+    event_type: "exposure" | "conversion";
+    page_url: string | null;
+    created_at: string;
+};
+
+// One decision the agent made, kept as an audit trail the founder can read.
+export type AgentAction = {
+    id: number;
+    experiment_id: string;
+    action: "evaluated" | "promoted_winner" | "kept_control" | "error";
+    detail: Record<string, unknown> | null;
+    created_at: string;
+};
+
+// One version inside an experiment. Control is a row too (is_control: true,
+// payload: null = "change nothing"). weight = % of visitors bucketed into it.
+// position preserves order (0 = control, 1 = Variant B, …).
 export type ExperimentVariant = {
     id: string;
     experiment_id: string;

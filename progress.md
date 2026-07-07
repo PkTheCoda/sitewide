@@ -43,21 +43,20 @@
 - [x] Rich-text warning: `hasMarkup` flag captured; heading spans selectable as their own elements
 - Later: compound variants (multi-element changes per variant), variant preview (Browserless render or snippet edit mode), selector self-healing when snippet reports a miss
 
-- [ ] `public/snippet.js` — the installable JS tag
-- [ ] `GET /api/snippet/config` (edge cached, 60s TTL)
-- [ ] `POST /api/snippet/event` (conversion tracking)
-- [ ] Experiment creation flow (from suggestion → experiment row)
-- [ ] `POST /api/experiments` route
-- [ ] Playwright preview render → screenshot of variant
-- [ ] `POST /api/experiments/[id]/preview` route
-- [ ] Experiment activation flow
-- [ ] `POST /api/experiments/[id]/activate` route
-- [ ] `POST /api/experiments/[id]/stop` route
-- [ ] Weekly evaluation cron (significance math, declare winner)
-- [ ] `POST /api/cron/evaluate` route
-- [ ] Apply winner as new default (update site's live copy)
-- [ ] Resend email integration
-- [ ] `POST /api/cron/email` route
+### 2.1 Runner + Agent skeleton (done 2026-07-06)
+- [x] `public/snippet.js` — visitor ID cookie, deterministic FNV-1a bucketing, DOM apply (text/style/src/hide) + MutationObserver re-apply, anti-flicker w/ 400ms failsafe, exposure+conversion via sendBeacon, winner serving at 100%
+- [x] `GET /api/snippet/config` (CORS-open, edge cached 60s, snippet_installed heartbeat)
+- [x] `POST /api/snippet/event` (validates experiment/variant, upsert w/ ignoreDuplicates — DB dedupes per visitor)
+- [x] `POST /api/agent/evaluate` — the agent loop: perceive (unique exposures/conversions) → decide (min sample + two-proportion z-test) → act (promote winner / keep control / continue) → log to `agent_actions`
+- [x] `lib/stats.ts` (z-test + normal CDF), `lib/supabaseAdmin.ts` (service role, server-only)
+- [x] Activation flow: `activateExperiment` upserts `sites` row by domain, links experiment, snippet install instructions UI
+- [x] Dashboard sections (no routing): Overview (working analyze bar → edge fn → redirect to report), Analyses (report cards), Experiments (expandable cards w/ variants + live results + activate/pause)
+- [ ] Vercel cron config for weekly `/api/agent/evaluate`
+- [ ] Rate limiting on event ingest
+- [ ] Resend email digest (`POST /api/cron/email`)
+- [ ] AI comment → one-click experiment
+- [ ] Selector self-healing loop (snippet reports miss → re-crawl → re-match)
+- [ ] Playwright/Browserless variant preview render
 
 ---
 
