@@ -14,6 +14,8 @@ import {
 } from "@/lib/types";
 import VariantFields, { isValidImageUrl } from "./VariantFields";
 import GoalSection from "./GoalSection";
+import PreviewLinks from "./PreviewLinks";
+import { buildPreviewLink } from "@/lib/preview";
 
 import gridPattern from "@/public/assets/grid-pattern-ES1.png"
 
@@ -121,6 +123,36 @@ export default function BuilderSidebar({
             (richParts ? filledPartVariants.length > 0 : filledTextVariants.length > 0)) ||
         (changeType === "style" && Object.keys(cleanedStyles).length > 0) ||
         (changeType === "image" && isValidImageUrl(imageSrc));
+
+    // Payloads assembled once, from live form state — used for BOTH the
+    // preview links and the actual submit, so what you preview is exactly
+    // what gets created.
+    const variantPayloads: VariantPayload[] =
+        changeType === "text"
+            ? richParts
+                ? filledPartVariants.map((textParts) => ({ textParts }))
+                : filledTextVariants.map((text) => ({ text }))
+            : changeType === "style"
+              ? Object.keys(cleanedStyles).length > 0
+                  ? [{ styles: cleanedStyles }]
+                  : []
+              : changeType === "image"
+                ? isValidImageUrl(imageSrc)
+                    ? [{ src: imageSrc.trim() }]
+                    : []
+                : [{ hide: true }];
+
+    // Live preview links (?sw_preview=…): the change is encoded in the URL
+    // itself, so these work before the experiment exists — the only
+    // requirement is the snippet being installed on the page.
+    const previewLinks = target
+        ? variantPayloads
+              .map((payload, i) => ({
+                  label: `Variant ${String.fromCharCode(66 + i)}`,
+                  url: buildPreviewLink(report.url, target.selector, target.fallback, payload),
+              }))
+              .filter((link): link is { label: string; url: string } => link.url !== null)
+        : [];
     const goalValid =
         (goalType === "click" && goalElement !== null) ||
         (goalType === "pageview" && goalPagePath.trim().startsWith("/"));
@@ -131,17 +163,6 @@ export default function BuilderSidebar({
         setSubmitting(true);
         setSubmitError(null);
 
-        const variant_payloads: VariantPayload[] =
-            changeType === "text"
-                ? richParts
-                    ? filledPartVariants.map((textParts) => ({ textParts }))
-                    : filledTextVariants.map((text) => ({ text }))
-                : changeType === "style"
-                  ? [{ styles: cleanedStyles }]
-                  : changeType === "image"
-                    ? [{ src: imageSrc.trim() }]
-                    : [{ hide: true }];
-
         const result = await createExperiment({
             user_id: user.id,
             report_id: Number(report.id),
@@ -150,7 +171,7 @@ export default function BuilderSidebar({
             hypothesis: hypothesis.trim() || null,
             target,
             change_type: changeType,
-            variant_payloads,
+            variant_payloads: variantPayloads,
             goal_type: goalType,
             goal_element: goalType === "click" ? goalElement : null,
             goal_page_path: goalType === "pageview" ? goalPagePath.trim() : null,
@@ -193,6 +214,14 @@ export default function BuilderSidebar({
                         and the experiment is activated.
                     </p>
                 </div>
+                {previewLinks.length > 0 && (
+                    <div className="w-full flex flex-col gap-1.5">
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                            Preview the variants on your live site (or share the links):
+                        </p>
+                        <PreviewLinks links={previewLinks} />
+                    </div>
+                )}
                 <div className="flex flex-col gap-2 w-full mt-2">
                     <button
                         onClick={resetForm}
@@ -297,6 +326,16 @@ export default function BuilderSidebar({
                                 imageSrc={imageSrc}
                                 onImageSrcChange={setImageSrc}
                             />
+                            {previewLinks.length > 0 && (
+                                <div className="flex flex-col gap-1.5 mt-1">
+                                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                                        See it before you commit — each link opens your live
+                                        page with that variant applied. Needs the Sitewide
+                                        snippet installed; records no data.
+                                    </p>
+                                    <PreviewLinks links={previewLinks} />
+                                </div>
+                            )}
                         </section>
 
                         {/* Step 3 — goal */}

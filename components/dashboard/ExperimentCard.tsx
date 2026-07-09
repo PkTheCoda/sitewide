@@ -8,6 +8,7 @@ import {
     pauseExperiment,
 } from "@/lib/experiments";
 import { Experiment, ExperimentVariant, VariantPayload } from "@/lib/types";
+import { buildPreviewLink } from "@/lib/preview";
 import StatusBadge from "./StatusBadge";
 import SnippetInstructions from "./SnippetInstructions";
 import { LuChevronDown, LuChevronUp } from "react-icons/lu";
@@ -163,6 +164,14 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
                                 const c = counts[variant.id] ?? { exposures: 0, conversions: 0 };
                                 const rate = c.exposures > 0 ? (c.conversions / c.exposures) * 100 : 0;
                                 const isWinner = experiment.winner_variant_id === variant.id;
+                                // Works at ANY status (even drafts) — the change is
+                                // encoded in the link, not served by the config route.
+                                const previewUrl = buildPreviewLink(
+                                    experiment.page_url,
+                                    experiment.selector,
+                                    experiment.selector_fallback,
+                                    variant.payload
+                                );
                                 return (
                                     <div
                                         key={variant.id}
@@ -185,6 +194,16 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
                                             <p className="text-[11px] text-stone-500 truncate mt-0.5">
                                                 {payloadSummary(variant.payload)}
                                             </p>
+                                            {previewUrl && (
+                                                <a
+                                                    href={previewUrl}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="inline-block text-[11px] text-orange-600 hover:text-orange-700 mt-1 transition-colors"
+                                                >
+                                                    Preview on your site ↗
+                                                </a>
+                                            )}
                                         </div>
                                         <div className="text-right shrink-0">
                                             <p className="text-xs font-medium text-stone-700">
