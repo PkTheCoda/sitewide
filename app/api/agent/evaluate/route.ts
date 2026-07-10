@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { compareVariants, VariantStats } from "@/lib/stats";
+import { proposeNextExperiment } from "@/lib/propose";
 
 // ─── The autonomous evaluation loop ─────────────────────────────────────────
 //
@@ -165,7 +166,17 @@ async function evaluateExperiment(
             stats,
         };
         await log(supabase, experiment.id, "promoted_winner", detail);
-        return { experiment_id: experiment.id, name: experiment.name, decision: "promoted_winner", ...detail };
+
+        // The experiment is settled — close the loop: draft the next test
+        // from the report's unused findings (founder approves via Activate).
+        const proposal = await propose(
+            supabase,
+            experiment.id,
+            `"${winnerVariant.name}" WON: ${(winner.variantRate * 100).toFixed(1)}% conversion vs ` +
+                `${(winner.controlRate * 100).toFixed(1)}% control (p=${winner.pValue.toFixed(4)}). ` +
+                `The winning copy is now served to all visitors.`
+        );
+        return { experiment_id: experiment.id, name: experiment.name, decision: "promoted_winner", proposal, ...detail };
     }
 
     if (allSignificantlyWorse) {
@@ -181,7 +192,16 @@ async function evaluateExperiment(
 
         const detail = { reason: "all_variants_worse", comparisons, stats };
         await log(supabase, experiment.id, "kept_control", detail);
-        return { experiment_id: experiment.id, name: experiment.name, decision: "kept_control", ...detail };
+
+        // Settled the other way — every challenger lost. Still worth closing
+        // the loop: the "what lost and why" is evidence for the next pick.
+        const proposal = await propose(
+            supabase,
+            experiment.id,
+            `Every variant performed significantly WORSE than the original — the test was ended ` +
+                `and the original copy kept. Avoid proposing more of the same idea.`
+        );
+        return { experiment_id: experiment.id, name: experiment.name, decision: "kept_control", proposal, ...detail };
     }
 
     const detail = { reason: "no_significant_difference_yet", comparisons, stats };
@@ -196,4 +216,21 @@ async function log(
     detail: Record<string, unknown>
 ) {
     await supabase.from("agent_actions").insert({ experiment_id, action, detail });
+}
+
+// Best-effort wrapper: a failed proposal (Claude down, key missing, bad
+// output) must never fail the evaluation itself — the promotion already
+// happened and is the thing that matters.
+async function propose(
+    supabase: ReturnType<typeof getSupabaseAdmin>,
+    experiment_id: string,
+    outcome_summary: string
+) {
+    try {
+        return await proposeNextExperiment(supabase, experiment_id, outcome_summary);
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("proposal failed:", message);
+        return { proposed: false as const, reason: `error: ${message}` };
+    }
 }

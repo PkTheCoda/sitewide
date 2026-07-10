@@ -137,11 +137,16 @@ export type Site = {
 //   user_id   — who owns it (RLS key)
 // The element being tested lives here as selector + fallback; WHAT each
 // version shows lives in experiment_variants.payload.
+// created_by = 'agent' rows are proposals from the weekly evaluation loop —
+// drafts the founder approves (Activate) or rejects (Dismiss → archived).
 export type Experiment = {
     id: string;
     user_id: string;
     report_id: number | null;
     site_id: string | null;
+    created_by: "user" | "agent";
+    agent_rationale: string | null;
+    source_comment_id: number | null;
     page_url: string;
     name: string;
     hypothesis: string | null;
@@ -208,10 +213,12 @@ export type DailySeries = {
 };
 
 // One decision the agent made, kept as an audit trail the founder can read.
+// proposed_experiment rows live under the COMPLETED experiment (the decision
+// context); detail.experiment_id points at the new draft it created.
 export type AgentAction = {
     id: number;
     experiment_id: string;
-    action: "evaluated" | "promoted_winner" | "kept_control" | "error";
+    action: "evaluated" | "promoted_winner" | "kept_control" | "proposed_experiment" | "error";
     detail: Record<string, unknown> | null;
     created_at: string;
 };

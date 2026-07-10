@@ -107,12 +107,14 @@ export async function createExperiment(input: NewExperiment) {
     return { id: experiment.id as string };
 }
 
-// get all experiments for a user, newest first
+// get all experiments for a user, newest first (archived = dismissed agent
+// proposals and retired tests — hidden from the list)
 export async function getExperiments(user_id: string) {
     const { data, error } = await supabase
         .from("experiments")
         .select("*")
         .eq("user_id", user_id)
+        .neq("status", "archived")
         .order("created_at", { ascending: false });
 
     if (error) {
@@ -175,6 +177,22 @@ export async function activateExperiment(experiment: Experiment) {
     }
 
     return { site_id: site_id as string };
+}
+
+// dismiss an experiment (archive it) — how a founder rejects an agent
+// proposal. The row stays in the DB so source_comment_id keeps that finding
+// marked as used and the agent never proposes it again.
+export async function dismissExperiment(experiment_id: string) {
+    const { error } = await supabase
+        .from("experiments")
+        .update({ status: "archived" })
+        .eq("id", experiment_id);
+
+    if (error) {
+        console.error(error);
+        return { error: error.message };
+    }
+    return { ok: true };
 }
 
 // pause a running experiment (snippet stops serving it within the cache TTL)

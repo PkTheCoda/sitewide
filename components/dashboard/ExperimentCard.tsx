@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
     activateExperiment,
+    dismissExperiment,
     getAgentActions,
     getExperimentEvents,
     getExperimentVariants,
@@ -46,6 +47,8 @@ function agentActionSummary(action: AgentAction): string {
     }
     if (action.action === "kept_control")
         return "Ended the test — every variant performed significantly worse than the original";
+    if (action.action === "proposed_experiment")
+        return `Proposed a follow-up test: "${d.name ?? "new experiment"}" — it's waiting in your experiments list as a draft`;
     if (action.action === "error") return `Error during evaluation: ${d.message ?? "unknown"}`;
     if (d.reason === "insufficient_sample")
         return `Waiting for more data — every variant needs ${d.min_sample_size ?? "?"} visitors before the agent will decide`;
@@ -130,6 +133,17 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
         }
     }
 
+    // Reject an agent proposal: archive it (row is kept so the agent never
+    // proposes the same finding again) and let the parent refetch the list.
+    async function handleDismiss() {
+        setBusy(true);
+        setError(null);
+        const result = await dismissExperiment(experiment.id);
+        setBusy(false);
+        if ("error" in result && result.error) setError(result.error);
+        else onChanged();
+    }
+
     async function handlePause() {
         setBusy(true);
         setError(null);
@@ -152,6 +166,11 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
                             {experiment.name}
                         </h3>
                         <StatusBadge status={experiment.status} />
+                        {experiment.created_by === "agent" && (
+                            <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-2 py-0.5">
+                                ✨ Agent proposal
+                            </span>
+                        )}
                     </div>
                     <p className="text-xs text-stone-500 mt-0.5 truncate">
                         {pagePath} · {CHANGE_LABEL[experiment.change_type] ?? experiment.change_type} test
@@ -170,6 +189,12 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
 
             {expanded && (
                 <div className="border-t border-stone-200 p-4 flex flex-col gap-4">
+                    {experiment.agent_rationale && (
+                        <p className="text-xs text-violet-900 leading-relaxed bg-violet-50 border border-violet-200 rounded-lg p-3">
+                            <span className="font-medium">Why your agent proposed this: </span>
+                            {experiment.agent_rationale}
+                        </p>
+                    )}
                     {experiment.hypothesis && (
                         <p className="text-xs text-stone-600 leading-relaxed bg-stone-50 border border-stone-200 rounded-lg p-3">
                             <span className="font-medium text-stone-700">Hypothesis: </span>
@@ -284,6 +309,15 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
                                 className="text-xs font-medium text-white bg-orange-600 hover:bg-orange-700 disabled:bg-stone-300 rounded-lg px-4 py-2 transition-colors"
                             >
                                 {busy ? "Working…" : experiment.status === "paused" ? "Resume" : "Activate"}
+                            </button>
+                        )}
+                        {experiment.created_by === "agent" && experiment.status === "draft" && (
+                            <button
+                                onClick={handleDismiss}
+                                disabled={busy}
+                                className="text-xs font-medium text-stone-500 hover:text-red-600 disabled:opacity-50 px-2 py-2 transition-colors"
+                            >
+                                Dismiss
                             </button>
                         )}
                         {experiment.status === "running" && (
