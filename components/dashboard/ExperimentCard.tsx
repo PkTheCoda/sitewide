@@ -3,11 +3,12 @@
 import { useState } from "react";
 import {
     activateExperiment,
+    getAgentActions,
     getExperimentEvents,
     getExperimentVariants,
     pauseExperiment,
 } from "@/lib/experiments";
-import { Experiment, ExperimentVariant, VariantPayload } from "@/lib/types";
+import { AgentAction, Experiment, ExperimentVariant, VariantPayload } from "@/lib/types";
 import { buildPreviewLink } from "@/lib/preview";
 import StatusBadge from "./StatusBadge";
 import SnippetInstructions from "./SnippetInstructions";
@@ -33,6 +34,24 @@ function payloadSummary(payload: VariantPayload): string {
     return "—";
 }
 
+// One-line human rendering of an agent_actions row. The detail blob's shape
+// depends on the action (see /api/agent/evaluate) — read it defensively.
+function agentActionSummary(action: AgentAction): string {
+    const d = (action.detail ?? {}) as Record<string, unknown>;
+    const pct = (n: unknown) => (typeof n === "number" ? `${(n * 100).toFixed(1)}%` : "?");
+    if (action.action === "promoted_winner") {
+        const verb = d.auto_promoted === false ? "Found a winner (auto-promote is off)" : "Promoted winner";
+        const p = typeof d.p_value === "number" ? d.p_value.toFixed(4) : "?";
+        return `${verb}: ${d.winner_name ?? "variant"} — ${pct(d.winner_rate)} vs ${pct(d.control_rate)} control (p=${p})`;
+    }
+    if (action.action === "kept_control")
+        return "Ended the test — every variant performed significantly worse than the original";
+    if (action.action === "error") return `Error during evaluation: ${d.message ?? "unknown"}`;
+    if (d.reason === "insufficient_sample")
+        return `Waiting for more data — every variant needs ${d.min_sample_size ?? "?"} visitors before the agent will decide`;
+    return "Evaluated — no statistically significant difference between variants yet";
+}
+
 type VariantCounts = Record<string, { exposures: number; conversions: number }>;
 
 type Props = {
@@ -49,6 +68,7 @@ type Props = {
 export default function ExperimentCard({ experiment, onChanged }: Props) {
     const [expanded, setExpanded] = useState(false);
     const [variants, setVariants] = useState<ExperimentVariant[] | null>(null);
+    const [actions, setActions] = useState<AgentAction[] | null>(null);
     const [counts, setCounts] = useState<VariantCounts>({});
     const [siteId, setSiteId] = useState<string | null>(experiment.site_id);
     const [showSnippet, setShowSnippet] = useState(false);
@@ -71,11 +91,13 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
         const next = !expanded;
         setExpanded(next);
         if (next && variants === null) {
-            const [variantData, eventData] = await Promise.all([
+            const [variantData, eventData, actionData] = await Promise.all([
                 getExperimentVariants(experiment.id),
                 getExperimentEvents(experiment.id),
+                getAgentActions(experiment.id),
             ]);
             if (Array.isArray(variantData)) setVariants(variantData as ExperimentVariant[]);
+            if (Array.isArray(actionData)) setActions(actionData as AgentAction[]);
             if (Array.isArray(eventData)) {
                 // Events arrive as raw rows (one per visitor per event type,
                 // deduped by the DB) — tally them into per-variant counts here.
@@ -218,6 +240,36 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
                             })
                         )}
                     </div>
+
+                    {/* agent decision log — every evaluation the agent has run
+                        on this experiment, newest first, with its reasoning */}
+                    {variants !== null && (
+                        <div className="flex flex-col gap-1.5">
+                            <p className="text-[10px] uppercase tracking-wider text-stone-400 font-medium">
+                                Agent activity
+                            </p>
+                            {actions === null || actions.length === 0 ? (
+                                <p className="text-[11px] text-stone-400 leading-relaxed">
+                                    No evaluations yet — the agent checks running experiments
+                                    every Monday at 9:00 UTC.
+                                </p>
+                            ) : (
+                                actions.map((action) => (
+                                    <div
+                                        key={action.id}
+                                        className="flex items-start justify-between gap-3 rounded-lg border border-stone-200 bg-stone-50 py-2 px-3"
+                                    >
+                                        <p className="text-[11px] text-stone-600 leading-relaxed">
+                                            {agentActionSummary(action)}
+                                        </p>
+                                        <span className="text-[10px] text-stone-400 shrink-0 mt-0.5">
+                                            {new Date(action.created_at).toLocaleString()}
+                                        </span>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    )}
 
                     {showSnippet && siteId && <SnippetInstructions siteId={siteId} />}
 
