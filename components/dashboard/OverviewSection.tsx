@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { useAuth } from "@/services/context/authContext";
@@ -11,14 +12,13 @@ import dashboardCta2 from "@/public/assets/dashboard-cta-2.svg";
 
 type Props = {
     displayName: string;
-    onNavigate: (section: string) => void; // switches dashboard sections in-place
 };
 
 // The Overview tab (dashboard home). The analyze bar is the important part:
 // it calls the analyze-page edge function directly (via lib/reports.analyzeUrl),
 // waits the ~30-60s the crawl+Claude analysis takes, then redirects to the
-// finished report. The CTA cards below it just focus the input / switch tabs.
-export default function OverviewSection({ displayName, onNavigate }: Props) {
+// finished report. The CTA cards below it just focus the input / navigate to tabs.
+export default function OverviewSection({ displayName }: Props) {
     const { user } = useAuth();
     const router = useRouter();
 
@@ -102,8 +102,8 @@ export default function OverviewSection({ displayName, onNavigate }: Props) {
                     </div>
                 </button>
 
-                <button
-                    onClick={() => onNavigate("analyses")}
+                <Link
+                    href="/dashboard/analyses"
                     className="w-full bg-stone-50 rounded-2xl grid grid-cols-2 relative shadow-xs border border-stone-200 hover:bg-stone-200 hover:border-stone-400 cursor-pointer transition-colors text-left"
                 >
                     <div className="p-4 flex flex-col justify-center gap-2 text-left">
@@ -117,10 +117,10 @@ export default function OverviewSection({ displayName, onNavigate }: Props) {
                     <div className="flex justify-center items-end px-4 pt-4">
                         <Image src={dashboardCta2} alt="dashboard cta 2" className="w-full h-full shadow-xs" />
                     </div>
-                </button>
+                </Link>
 
-                <button
-                    onClick={() => onNavigate("experiments")}
+                <Link
+                    href="/dashboard/experiments"
                     className="w-full bg-stone-50 rounded-2xl grid grid-cols-2 relative shadow-xs border border-stone-200 hover:bg-stone-200 hover:border-stone-400 cursor-pointer transition-colors text-left"
                 >
                     <div className="p-4 flex flex-col justify-center gap-2 text-left">
@@ -134,7 +134,7 @@ export default function OverviewSection({ displayName, onNavigate }: Props) {
                     <div className="flex justify-center items-end px-4 pt-4">
                         <Image src={dashboardCta1} alt="dashboard cta 3" className="w-full h-full shadow-xs" />
                     </div>
-                </button>
+                </Link>
             </div>
         </div>
     );

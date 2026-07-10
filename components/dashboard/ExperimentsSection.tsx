@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@/services/context/authContext";
 import { getExperiments } from "@/lib/experiments";
 import { Experiment } from "@/lib/types";
@@ -9,15 +10,11 @@ import Image from "next/image";
 
 import ExperimentGraphic from "@/public/assets/dashboard-cta-2.svg"
 
-type Props = {
-    onNavigate: (section: string) => void;
-};
-
 // The Experiments tab: fetches every experiment the logged-in user owns
 // (RLS enforces ownership — the query itself doesn't need a filter beyond
 // user_id) and renders one ExperimentCard per row. `load` is passed down as
 // onChanged so cards can refresh the whole list after activate/pause.
-export default function ExperimentsSection({ onNavigate }: Props) {
+export default function ExperimentsSection() {
     const { user } = useAuth();
     const [experiments, setExperiments] = useState<Experiment[] | null>(null);
 
@@ -59,12 +56,12 @@ export default function ExperimentsSection({ onNavigate }: Props) {
                         Run an analysis, open the report, and click any element on your page
                         to create your first A/B test.
                     </p>
-                    <button
-                        onClick={() => onNavigate("analyses")}
+                    <Link
+                        href="/dashboard/analyses"
                         className="text-xs font-medium text-white bg-orange-600 hover:bg-orange-700 rounded-lg px-4 py-2 transition-colors"
                     >
                         Go to analyses
-                    </button>
+                    </Link>
                 </div>
             ) : (
                 <div className="flex flex-col gap-3">
