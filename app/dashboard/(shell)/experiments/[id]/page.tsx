@@ -59,6 +59,8 @@ import {
     YAxis,
 } from "recharts";
 
+import { PiLinkDuotone } from "react-icons/pi";
+
 // Chart series colors — validated as a categorical palette (CVD-safe against
 // each other, ≥3:1 on white). Views is context (soft area), exposures and
 // conversions are the story (lines).
@@ -694,7 +696,7 @@ export default function IndividualExperimentPage() {
 
                     {/* Goal Element */}
                     <div className="flex flex-col font-medium">
-                        <h4 className="opacity-50 uppercase tracking-wide text-xs mb-1">Target element</h4>
+                        <h4 className="opacity-50 uppercase tracking-wide text-xs mb-1">Goal element</h4>
                         <div className="flex items-center gap-1.5 min-w-0">
                             <span className="max-w-88">
                                 {targetLabel
@@ -775,74 +777,99 @@ export default function IndividualExperimentPage() {
                             byVariant[variant.id] ??
                             days.map((d) => ({ day: d.day, views: 0, exposures: 0, conversions: 0 }));
                         return (
-                            <div
-                                key={variant.id}
-                                className={`rounded-xl border p-4 flex flex-col gap-3 ${
-                                    isWinner ? "border-emerald-300 bg-emerald-50/60" : "border-stone-200 bg-white"
-                                }`}
-                            >
-                                <div className="flex items-center justify-between gap-4">
-                                    <div className="min-w-0 ">
-                                        <p className="text-xs font-medium text-stone-800 flex items-center gap-2">
-                                            <h3 className="font-medium tracking-tight text-stone-700 truncate text-lg">
-                                                {variant.name}
-                                            </h3>
-                                            
-                                            {/* {variant.is_control && (
-                                                <span className="text-[10px] font-normal text-stone-400 uppercase tracking-wider">
-                                                    original
-                                                </span>
-                                            )} */}
-                                            {isWinner && (
-                                                <span className="text-[10px] font-medium text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">
-                                                    Winner
-                                                </span>
-                                            )}
-                                        </p>
-                                        <p className="text-xs text-stone-500 leading-relaxed mt-1 line-clamp-2">
-                                            {payloadText(variant.payload)}
-                                        </p>
-                                        {/* {previewUrl && (
-                                            <a
-                                                href={previewUrl}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="inline-flex items-center gap-1 text-[11px] text-orange-600 hover:text-orange-700 mt-1.5 transition-colors"
-                                            >
-                                                Preview on your site
-                                                <LuExternalLink className="size-3" />
-                                            </a>
-                                        )} */}
+                            <div className="flex flex-col items-end w-full">
+                                <div
+                                    key={variant.id}
+                                    className={`relative rounded-xl rounded-br-none border p-4 flex flex-col gap-3 w-full ${
+                                        isWinner ? "border-emerald-300 bg-emerald-50/60" : "border-stone-200 bg-white"
+                                    }`}
+                                >
+                                    <div className="flex items-center justify-between gap-4">
+                                        <div className="min-w-0 ">
+                                            <p className="text-xs font-medium text-stone-800 flex items-center gap-2">
+                                                <div className="flex items-center gap-2">
+                                                    <Link
+                                                        href={previewUrl ? previewUrl : pageLabel}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className="cursor-pointer"
+                                                    >
+                                                        <PiLinkDuotone className="size-4 text-stone-500 hover:text-blue-500 transition-colors" />
+                                                    </Link>
+                                               
+                                                    <h3 className="font-medium tracking-tight text-stone-700 truncate text-lg">
+                                                        {variant.name}
+                                                    </h3>
+                                                </div>
+                                                
+                                                {/* {variant.is_control && (
+                                                    <span className="text-[10px] font-normal text-stone-400 uppercase tracking-wider">
+                                                        original
+                                                    </span>
+                                                )} */}
+                                                {isWinner && (
+                                                    <span className="text-[10px] font-medium text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">
+                                                        Winner
+                                                    </span>
+                                                )}
+                                            </p>
+                                            <p className="text-xs text-stone-500 leading-relaxed mt-1 line-clamp-2">
+                                                {payloadText(variant.payload)}
+                                            </p>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                            <p className="text-lg font-semibold text-stone-800 tabular-nums font-robot">
+                                                {rate.toFixed(1)}% <span className="font-inter">CONVERSION</span>
+                                            </p>
+                                            <p className="text-[11px] text-stone-400 tabular-nums">
+                                                {c.conversions}/{c.exposures} visitors · {variant.weight}% of traffic
+                                            </p>
+                                        </div>
                                     </div>
-                                    <div className="text-right shrink-0">
-                                        <p className="text-lg font-semibold text-stone-800 tabular-nums font-robot">
-                                            {rate.toFixed(1)}% <span className="font-inter">CONVERSION</span>
-                                        </p>
-                                        <p className="text-[11px] text-stone-400 tabular-nums">
-                                            {c.conversions}/{c.exposures} visitors · {variant.weight}% of traffic
-                                        </p>
+
+                                    {/* rate bar, scaled to the best variant */}
+                                    <div className="h-1.5 bg-stone-100 rounded-full overflow-hidden">
+                                        <div
+                                            className={`h-full rounded-full ${isWinner ? "bg-emerald-500" : "bg-stone-300"}`}
+                                            style={{
+                                                width: `${Math.max(2, (rate / maxRate) * 100)}%`,
+                                                opacity: rate === 0 ? 0.25 : 1,
+                                            }}
+                                        />
+                                    </div>
+
+                                    <div className="flex flex-col gap-2 pt-1">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <p className="text-[11px] font-medium text-stone-500">Daily activity</p>
+                                            <ChartLegend />
+                                        </div>
+                                        <DailyActivityChart
+                                            data={variantDays}
+                                            gradientId={`viewsFill-${variant.id}`}
+                                        />
                                     </div>
                                 </div>
-                                {/* rate bar, scaled to the best variant */}
-                                {/* <div className="h-1.5 bg-stone-100 rounded-full overflow-hidden">
-                                    <div
-                                        className={`h-full rounded-full ${isWinner ? "bg-emerald-500" : "bg-orange-600"}`}
-                                        style={{
-                                            width: `${Math.max(2, (rate / maxRate) * 100)}%`,
-                                            opacity: rate === 0 ? 0.25 : 1,
-                                        }}
-                                    />
+                                {/* <div className="bg-stone-200 w-max px-2 rounded-b-md transition-opacity absolute top-0 right-0">
+                                    {previewUrl ? (
+                                        <a
+                                            href={previewUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="inline-flex items-center text-xs font-medium tracking-tight text-stone-500"
+                                        >
+                                            Preview Variant
+                                        </a>
+                                    ) : 
+                                    <a
+                                        href={pageLabel}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex items-center text-xs font-medium tracking-tight text-stone-500"
+                                    >
+                                        Preview Page
+                                    </a>
+                                    }
                                 </div> */}
-                                <div className="flex flex-col gap-2 pt-1">
-                                    <div className="flex flex-wrap items-center justify-between gap-2">
-                                        <p className="text-[11px] font-medium text-stone-500">Daily activity</p>
-                                        <ChartLegend />
-                                    </div>
-                                    <DailyActivityChart
-                                        data={variantDays}
-                                        gradientId={`viewsFill-${variant.id}`}
-                                    />
-                                </div>
                             </div>
                         );
                     })}
