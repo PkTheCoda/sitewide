@@ -91,3 +91,4 @@
 | 2026-06-28 | Two parallel Browserless calls (/screenshot + /function) | Avoids Buffer/base64 encoding issues in sandboxed Deno environment |
 | 2026-06-28 | reports.id is integer (not UUID) | Created table with Supabase default; migrate to UUID before launch |
 | 2026-06-06 | Store pin coords as percentages | Pins stay accurate at any display size |
+| 2026-07-11 | Analysis prompt overhaul: Haiku → Sonnet 5 (ANALYZE_MODEL env override), 8-10 comment quota → 3-8 quality-gated, structured outputs (json_schema) replacing JSON prompt hacks, gold/anti few-shot examples | Analysis is the founder's first impression; quota was forcing weak findings; structured outputs delete a whole class of parse failures |

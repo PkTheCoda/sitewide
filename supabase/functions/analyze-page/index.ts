@@ -4,6 +4,91 @@ import { createClient } from "@supabase/supabase-js";
 const BROWSERLESS_URL = "https://chrome.browserless.io";
 const VIEWPORT = { width: 1440, height: 900 };
 
+// Sonnet 5 by default; set ANALYZE_MODEL=claude-opus-4-8 when the quality of
+// this call matters more than its cost — the analysis is the founder's first
+// impression of the product.
+const ANALYZE_MODEL = Deno.env.get("ANALYZE_MODEL") ?? "claude-sonnet-5";
+
+// What Claude must return. Structured outputs guarantee this exact shape —
+// no JSON-escaping prompt rules, no markdown fences to strip. Same pattern
+// as lib/propose.ts. Field descriptions here carry the shape guidance that
+// used to live in the prompt's JSON template.
+const ANALYSIS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["overall_score", "summary", "comments"],
+  properties: {
+    overall_score: {
+      type: "integer",
+      description: "Conversion readiness of the page, 1 (broken) to 10 (excellent)",
+    },
+    summary: {
+      type: "string",
+      description: "2 short sentences: the biggest conversion killer and one thing working",
+    },
+    comments: {
+      type: "array",
+      description: "3 to 8 findings, strongest first",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "element_id", "element_tag", "section", "dimension", "severity",
+          "comment", "why_it_matters", "suggestion", "hypothesis", "variants",
+          "test_type", "meta",
+        ],
+        properties: {
+          element_id: {
+            type: "integer",
+            description: "id of the element from KEY ELEMENTS this finding is about",
+          },
+          element_tag: { type: "string", description: "tag of that element, e.g. h1" },
+          section: { type: "string", description: "page section the element sits in" },
+          dimension: {
+            type: "string",
+            enum: [
+              "Value Proposition", "CTA Effectiveness", "Social Proof",
+              "Friction & Clarity", "Urgency & Motivation", "Pricing Psychology",
+            ],
+          },
+          severity: { type: "string", enum: ["critical", "warning", "suggestion"] },
+          comment: {
+            type: "string",
+            description: "The problem in 1-2 short sentences. Direct, no filler. What is wrong and why a visitor bounces.",
+          },
+          why_it_matters: {
+            type: "string",
+            description: "1-2 sentences on the conversion impact — what this costs the founder in lost signups or clicks",
+          },
+          suggestion: {
+            type: "string",
+            description: "One sentence: the specific change to make",
+          },
+          hypothesis: {
+            type: "string",
+            description: "If [specific element] is changed to [specific thing], [signups/trials/clicks] will increase because [psychological reason]",
+          },
+          variants: {
+            type: "array",
+            items: { type: "string" },
+            description: "2 exact drop-in replacements for the element's text, each within ±2 words of the original word_count",
+          },
+          test_type: { type: "string", enum: ["copy_change", "visibility", "reorder"] },
+          meta: {
+            type: "object",
+            additionalProperties: false,
+            required: ["effort", "impact"],
+            properties: {
+              effort: { type: "string", enum: ["Quick win", "Some work", "Big lift"] },
+              impact: { type: "string", enum: ["High", "Medium", "Low"] },
+            },
+          },
+        },
+      },
+    },
+  },
+} as const;
+
 // Single Browserless /function call: screenshot + element extraction in one Chrome instance.
 // This guarantees that element pixel positions align with the screenshot — they are measured
 // from the exact same rendered DOM that was captured. The screenshot is returned as base64
@@ -345,40 +430,28 @@ DIMENSIONS — pick exactly one per comment:
 - "Urgency & Motivation" — no reason to act now instead of later
 - "Pricing Psychology" — pricing creates sticker shock, confusion, or doesn't guide a decision
 
-Return ONLY valid JSON, no markdown:
-{
-  "overall_score": <1-10>,
-  "summary": "<2 short sentences: biggest conversion killer and one thing working>",
-  "comments": [
-    {
-      "element_id": <number matching an id above>,
-      "element_tag": "<tag>",
-      "section": "<section>",
-      "dimension": "<dimension>",
-      "severity": "<critical|warning|suggestion>",
-      "comment": "<the problem in 1-2 short sentences. Direct, no em dashes, no filler. State what is wrong and why a visitor bounces.>",
-      "why_it_matters": "<1-2 sentences on the conversion impact. What does this cost the founder in lost signups or clicks?>",
-      "suggestion": "<one sentence: the specific change to make>",
-      "hypothesis": "<If [specific element] is changed to [specific thing], [signups/trials/clicks] will increase because [psychological reason]>",
-      "variants": ["<variant 1: exact ready-to-use copy>", "<variant 2: exact ready-to-use copy>"],
-      "test_type": "<copy_change|visibility|reorder>",
-      "meta": { "effort": "<Quick win|Some work|Big lift>", "impact": "<High|Medium|Low>" }
-    }
-  ]
-}
-
 RULES:
-- 8 to 10 comments.
+- 3 to 8 comments. Only include a comment if you would bet money on the hypothesis — fewer, stronger comments beat more, weaker ones. Do not pad to fill a quota.
 - ONE element per comment. Never combine two elements (e.g. h1 + subtitle) into a single comment. Each comment must reference exactly one element_id.
 - Each element_id must appear at most once in the comments array. Never create two comments for the same element.
 - comment and why_it_matters: short, direct sentences. No em dashes. No "which causes" chains. No padding.
 - variants: exact drop-in replacement copy for that element's text. Must match the element's word_count within ±2 words. Do not write longer copy to replace short copy.
 - If an element has siblings > 1, it is one of N repeating items. Variants must be the same approximate length as each other and as the original — they all need to fit the same layout slot.
-- CRITICAL: never use double-quote characters ( " ) inside any string value. Use single quotes or rephrase. Double quotes inside JSON strings will break the response.
 - effort: "Quick win" = copy change only. "Some work" = structural change. "Big lift" = new content or redesign.
 - impact: expected conversion lift. "High" = major lever, "Medium" = meaningful, "Low" = incremental.
 - Skip any comment you can't write a specific hypothesis for.
-- Only reference element ids from the list above.`;
+- Only reference element ids from the list above.
+
+WHAT A GOOD COMMENT LOOKS LIKE (this is the bar — for an imaginary h1 reading "We help teams work better"):
+- comment: "This headline could describe a thousand products. A visitor cannot tell what it does, who it is for, or why it beats the tool they already use."
+- hypothesis: "If the h1 names the specific outcome and audience, hero CTA clicks will increase because visitors decide in seconds whether a page is relevant to them."
+- variants: ["Ship your changelog in 5 minutes, not 5 days", "The changelog your users will actually read"]
+Specific, punchy, and the variants are real copy someone could ship today.
+
+NEVER PRODUCE THIS (too generic):
+- comment: "The headline could be more engaging and compelling to visitors."
+- suggestion: "Consider making the headline more benefit-focused."
+If a comment could apply to any website, delete it.`;
 
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -388,9 +461,10 @@ RULES:
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model:      'claude-haiku-4-5-20251001',
-        max_tokens: 8000,
+        model:      ANALYZE_MODEL,
+        max_tokens: 16000, // adaptive thinking spends from this budget too; 16K is the non-streaming ceiling
         messages:   [{ role: 'user', content: prompt }],
+        output_config: { format: { type: 'json_schema', schema: ANALYSIS_SCHEMA } },
       }),
     });
 
@@ -399,26 +473,18 @@ RULES:
     }
 
     const claudeData = await claudeRes.json();
-    let rawText = claudeData.content[0].text.trim();
     const stopReason = claudeData.stop_reason;
+    if (stopReason === 'refusal' || stopReason === 'max_tokens') {
+      throw new Error(`Claude stopped early (${stopReason}) — analysis not completed`);
+    }
+
+    // Thinking blocks may precede the text block — never assume content[0].
+    const rawText = claudeData.content.find((b: any) => b.type === 'text')?.text;
+    if (!rawText) throw new Error('Claude returned no text');
     console.log('Claude stop_reason:', stopReason, '| output length:', rawText.length);
 
-    if (stopReason === 'max_tokens') {
-      throw new Error(`Claude output was truncated (max_tokens hit at ${rawText.length} chars) — increase max_tokens or reduce comment count`);
-    }
-
-    if (rawText.startsWith('```')) {
-      rawText = rawText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
-    }
-    let analysis: any;
-    try {
-      analysis = JSON.parse(rawText);
-    } catch (parseErr: any) {
-      const pos = parseInt(parseErr.message.match(/position (\d+)/)?.[1] ?? '0');
-      console.error('JSON parse failed:', parseErr.message);
-      console.error('Context around failure:', rawText.slice(Math.max(0, pos - 120), pos + 120));
-      throw new Error(`Claude returned malformed JSON: ${parseErr.message}`);
-    }
+    // Structured outputs guarantee this parses and matches ANALYSIS_SCHEMA.
+    const analysis = JSON.parse(rawText);
 
     // ── Step 5: Resolve element_id → real pixel coordinates ───────────────
     // The model returns "element 12 has a weak CTA". We look up element 12 in our
