@@ -125,6 +125,22 @@ export async function getExperiments(user_id: string) {
     return data;
 }
 
+// get one experiment by id (RLS enforces ownership)
+export async function getExperiment(experiment_id: string) {
+    const { data, error } = await supabase
+        .from("experiments")
+        .select("*")
+        .eq("id", experiment_id)
+        .single();
+
+    if (error) {
+        console.error(error);
+        return { error: error.message };
+    }
+
+    return data;
+}
+
 // activate a draft/paused experiment. Ensures a `sites` row exists for the
 // experiment's domain (the snippet identifies itself by site id), links it,
 // and flips status to running. Returns the site_id for install instructions.
@@ -177,6 +193,21 @@ export async function activateExperiment(experiment: Experiment) {
     }
 
     return { site_id: site_id as string };
+}
+
+// rename an experiment (names are the founder's handle on a test — shown
+// everywhere instead of ids)
+export async function renameExperiment(experiment_id: string, name: string) {
+    const { error } = await supabase
+        .from("experiments")
+        .update({ name: name.trim() })
+        .eq("id", experiment_id);
+
+    if (error) {
+        console.error(error);
+        return { error: error.message };
+    }
+    return { ok: true };
 }
 
 // dismiss an experiment (archive it) — how a founder rejects an agent
