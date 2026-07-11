@@ -7,7 +7,7 @@ const VIEWPORT = { width: 1440, height: 900 };
 // Sonnet 5 by default; set ANALYZE_MODEL=claude-opus-4-8 when the quality of
 // this call matters more than its cost — the analysis is the founder's first
 // impression of the product.
-const ANALYZE_MODEL = Deno.env.get("ANALYZE_MODEL") ?? "claude-sonnet-5";
+const ANALYZE_MODEL = Deno.env.get("ANALYZE_MODEL") ?? "claude-haiku-4-5";
 
 // What Claude must return. Structured outputs guarantee this exact shape —
 // no JSON-escaping prompt rules, no markdown fences to strip. Same pattern
@@ -34,7 +34,7 @@ const ANALYSIS_SCHEMA = {
         additionalProperties: false,
         required: [
           "element_id", "element_tag", "section", "dimension", "severity",
-          "comment", "why_it_matters", "suggestion", "hypothesis", "variants",
+          "comment", "why_it_matters", "suggestion", "hypothesis", "rewrites",
           "test_type", "meta",
         ],
         properties: {
@@ -68,10 +68,25 @@ const ANALYSIS_SCHEMA = {
             type: "string",
             description: "If [specific element] is changed to [specific thing], [signups/trials/clicks] will increase because [psychological reason]",
           },
-          variants: {
+          rewrites: {
             type: "array",
-            items: { type: "string" },
-            description: "2 exact drop-in replacements for the element's text, each within ±2 words of the original word_count",
+            description: "Exactly 2 rewrites for copy_change comments (empty only for visibility/reorder tests)",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["text", "parts"],
+              properties: {
+                text: {
+                  type: "string",
+                  description: "The full drop-in replacement for the element's text, within ±2 words of the original word_count",
+                },
+                parts: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "Only when the element has text_parts: this same rewrite split into exactly one string per part, same order. Empty array when the element has no text_parts.",
+                },
+              },
+            },
           },
           test_type: { type: "string", enum: ["copy_change", "visibility", "reorder"] },
           meta: {
@@ -400,6 +415,11 @@ Deno.serve(async (req) => {
         position:   `${Math.round((el.top / pageHeight) * 100)}% from top`,
       };
       if ((el.siblingCount ?? 1) > 1) entry.siblings = el.siblingCount;
+      // Rich text: the element's text is split across styled children (e.g. a
+      // gradient span inside an h1). Claude sees the split so it can propose
+      // variants part-by-part — the snippet swaps text nodes in place, which
+      // keeps the styling.
+      if (el.textParts && el.textParts.length > 1) entry.text_parts = el.textParts;
       return entry;
     });
 
@@ -435,8 +455,9 @@ RULES:
 - ONE element per comment. Never combine two elements (e.g. h1 + subtitle) into a single comment. Each comment must reference exactly one element_id.
 - Each element_id must appear at most once in the comments array. Never create two comments for the same element.
 - comment and why_it_matters: short, direct sentences. No em dashes. No "which causes" chains. No padding.
-- variants: exact drop-in replacement copy for that element's text. Must match the element's word_count within ±2 words. Do not write longer copy to replace short copy.
-- If an element has siblings > 1, it is one of N repeating items. Variants must be the same approximate length as each other and as the original — they all need to fit the same layout slot.
+- Every copy_change comment MUST include exactly 2 rewrites. Each rewrite's text is complete drop-in replacement copy for that element's text and must match the element's word_count within ±2 words. Do not write longer copy to replace short copy. Never leave rewrites empty on a copy_change comment.
+- If an element has siblings > 1, it is one of N repeating items. Rewrites must be the same approximate length as each other and as the original — they all need to fit the same layout slot.
+- If the element has text_parts, its text is split across styled fragments (e.g. "Ship" + "faster" where "faster" is a colored span). For each rewrite of such an element, ALSO fill parts: the same rewrite split into exactly one string per part, same order, each part roughly the same length as the original part so the styling still fits. The parts joined together must read as the rewrite's text. Elements without text_parts get parts: [].
 - effort: "Quick win" = copy change only. "Some work" = structural change. "Big lift" = new content or redesign.
 - impact: expected conversion lift. "High" = major lever, "Medium" = meaningful, "Low" = incremental.
 - Skip any comment you can't write a specific hypothesis for.
@@ -445,8 +466,8 @@ RULES:
 WHAT A GOOD COMMENT LOOKS LIKE (this is the bar — for an imaginary h1 reading "We help teams work better"):
 - comment: "This headline could describe a thousand products. A visitor cannot tell what it does, who it is for, or why it beats the tool they already use."
 - hypothesis: "If the h1 names the specific outcome and audience, hero CTA clicks will increase because visitors decide in seconds whether a page is relevant to them."
-- variants: ["Ship your changelog in 5 minutes, not 5 days", "The changelog your users will actually read"]
-Specific, punchy, and the variants are real copy someone could ship today.
+- rewrites: ["Ship your changelog in 5 minutes, not 5 days", "The changelog your users will actually read"]
+Specific, punchy, and the rewrites are real copy someone could ship today.
 
 NEVER PRODUCE THIS (too generic):
 - comment: "The headline could be more engaging and compelling to visitors."
@@ -502,8 +523,32 @@ If a comment could apply to any website, delete it.`;
         // Confidence drops slightly if the model guessed the wrong tag for the element
         const confidence = comment.element_tag === el.tag ? 1.0 : 0.7;
 
+        // Normalize rewrites → the flat variants column + validated
+        // variant_parts. A part-split is only kept when it matches the
+        // element's REAL part count — the snippet maps parts onto text nodes
+        // 1:1, so a mismatched split is unusable.
+        const expectedParts =
+          el.textParts && el.textParts.length > 1 ? el.textParts.length : 0;
+        const rewrites = (comment.rewrites ?? []).filter(
+          (r: any) => typeof r?.text === 'string' && r.text.trim()
+        );
+        const variants = rewrites.map((r: any) => r.text.trim());
+        const variant_parts = expectedParts
+          ? rewrites
+              .map((r: any) => r.parts)
+              .filter(
+                (p: any) =>
+                  Array.isArray(p) &&
+                  p.length === expectedParts &&
+                  p.every((s: any) => typeof s === 'string' && s.trim())
+              )
+          : [];
+        delete comment.rewrites;
+
         return {
           ...comment,
+          variants,
+          variant_parts,
           confidence,
           selector:       el.selector,
           original_value: el.text ?? el.alt ?? null,
@@ -550,6 +595,7 @@ If a comment could apply to any website, delete it.`;
             suggestion:     c.suggestion,
             hypothesis:     c.hypothesis     ?? null,
             variants:       c.variants       ?? [],
+            variant_parts:  c.variant_parts  ?? [],
             test_type:      c.test_type      ?? 'copy_change',
             selector:       c.selector       ?? null,
             original_value: c.original_value ?? null,

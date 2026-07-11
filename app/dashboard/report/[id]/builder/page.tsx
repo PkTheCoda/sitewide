@@ -1,20 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import ProtectedRoute from "@/components/ProtectedRoute";
-import { getReport } from "@/lib/reports";
-import { PageElement, Report } from "@/lib/types";
+import { getReport, getComments } from "@/lib/reports";
+import { Comment, PageElement, Report } from "@/lib/types";
 import BuilderCanvas from "@/components/experiment-builder/BuilderCanvas";
-import BuilderSidebar from "@/components/experiment-builder/BuilderSidebar";
+import BuilderSidebar, { Prefill } from "@/components/experiment-builder/BuilderSidebar";
 
-export default function ExperimentBuilderPage() {
+function ExperimentBuilder() {
     const params = useParams<{ id: string }>();
     const reportId = params.id;
+    // ?comment=<id> — arrive from a report finding with the form prefilled.
+    const commentId = useSearchParams().get("comment");
 
     const [report, setReport] = useState<Report | null>(null);
     const [loading, setLoading] = useState(true);
+    const [prefill, setPrefill] = useState<Prefill | null>(null);
 
     // Selection state shared between the canvas and the sidebar. Everything
     // else (variants, goal path, name…) lives inside BuilderSidebar.
@@ -26,11 +29,38 @@ export default function ExperimentBuilderPage() {
         if (!reportId) return;
         async function load() {
             const reportData = await getReport(reportId);
-            if (reportData && !("error" in reportData)) setReport(reportData as Report);
+            if (!reportData || "error" in reportData) {
+                setLoading(false);
+                return;
+            }
+            const loaded = reportData as Report;
+            setReport(loaded);
+
+            // Deep link from a finding: select its element and carry the AI's
+            // name/hypothesis/variants into the sidebar.
+            if (commentId && loaded.elements?.length) {
+                const commentsData = await getComments(reportId);
+                const comment = Array.isArray(commentsData)
+                    ? (commentsData as Comment[]).find((c) => String(c.id) === commentId)
+                    : null;
+                const element = comment
+                    ? loaded.elements.find((el) => el.id === comment.element_id)
+                    : null;
+                if (comment && element) {
+                    setTarget(element);
+                    setPrefill({
+                        elementId: element.id,
+                        name: `Test: ${(element.text ?? element.tag).slice(0, 40)}`,
+                        hypothesis: comment.hypothesis ?? "",
+                        variants: comment.variants ?? [],
+                        variantParts: comment.variant_parts ?? [],
+                    });
+                }
+            }
             setLoading(false);
         }
         load();
-    }, [reportId]);
+    }, [reportId, commentId]);
 
     function handleSelect(element: PageElement) {
         if (pickingGoal) {
@@ -84,6 +114,7 @@ export default function ExperimentBuilderPage() {
                             target={target}
                             goalElement={goalElement}
                             pickingGoal={pickingGoal}
+                            prefill={prefill}
                             onStartPickingGoal={() => setPickingGoal(true)}
                             onCancelPickingGoal={() => setPickingGoal(false)}
                             onReset={handleReset}
@@ -120,5 +151,21 @@ export default function ExperimentBuilderPage() {
                 )}
             </div>
         </ProtectedRoute>
+    );
+}
+
+// useSearchParams requires a Suspense boundary in production builds — without
+// it the whole page bails out of prerendering and the build fails.
+export default function ExperimentBuilderPage() {
+    return (
+        <Suspense
+            fallback={
+                <div className="flex items-center justify-center min-h-screen text-slate-500">
+                    Loading builder…
+                </div>
+            }
+        >
+            <ExperimentBuilder />
+        </Suspense>
     );
 }

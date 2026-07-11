@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Comment, Report, Severity } from "@/lib/types";
 import { SEVERITY_COLORS } from "./CommentPin";
 import { IoChevronBack, IoChevronForward } from "react-icons/io5";
@@ -132,6 +133,16 @@ export default function CommentSidebar({ report, comments, activeIndex, onNaviga
                                 </div>
 
                             </div>
+
+                            {/* One-click test creation: opens the builder with
+                                the element, name, hypothesis and variants
+                                prefilled — the founder only picks the goal. */}
+                            <Link
+                                href={`/dashboard/report/${report.id}/builder?comment=${comment.id}`}
+                                className="text-xs font-medium text-center text-white bg-orange-600 hover:bg-orange-700 rounded-md py-2.5 transition-colors"
+                            >
+                                Create this test →
+                            </Link>
 
                         </div>
                     )}

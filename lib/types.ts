@@ -79,6 +79,10 @@ export type Comment = {
     suggestion: string;
     hypothesis: string | null;
     variants: string[];
+    // Rich-text split of each variant (one inner array per variant, one string
+    // per text part of the element). Empty/absent for plain-text elements and
+    // for reports analyzed before this column existed.
+    variant_parts?: string[][] | null;
     test_type: string | null;
     selector: string | null;
     original_value: string | null;

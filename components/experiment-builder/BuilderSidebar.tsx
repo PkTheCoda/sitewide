@@ -22,11 +22,22 @@ import gridPattern from "@/public/assets/grid-pattern-ES1.png"
 import sidebarEmpty from "@/public/assets/sidebar-empty-state-graphic.svg"
 import Image from "next/image";
 
+// Seed values carried in from an AI finding ("Create this test" on the report
+// page). Applied once, when the deep-linked element becomes the target.
+export type Prefill = {
+    elementId: number; // only applies while this element is the target
+    name: string;
+    hypothesis: string;
+    variants: string[]; // flat replacement texts
+    variantParts: string[][]; // rich-text split, one inner array per variant
+};
+
 type Props = {
     report: Report;
     target: PageElement | null;
     goalElement: PageElement | null;
     pickingGoal: boolean;
+    prefill?: Prefill | null;
     onStartPickingGoal: () => void;
     onCancelPickingGoal: () => void;
     onReset: () => void;
@@ -54,6 +65,7 @@ export default function BuilderSidebar({
     target,
     goalElement,
     pickingGoal,
+    prefill,
     onStartPickingGoal,
     onCancelPickingGoal,
     onReset,
@@ -94,14 +106,37 @@ export default function BuilderSidebar({
         }
     }, [target]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Re-seed the per-part editor whenever the selection changes — part counts
-    // differ per element. Starts with one variant prefilled with the original
+    // Seed the variant editors whenever the selection changes. When the
+    // selected element is the deep-linked AI finding, seed with its rewrites;
+    // otherwise rich-text elements start with one variant holding the original
     // parts, so the founder only edits the piece they want to test.
+    // Deliberately ONE idempotent effect: a previous version split this into
+    // a plain reseed ([target]) plus a run-once prefill guarded by a ref, and
+    // StrictMode's second effect pass re-ran the reseed while the ref made the
+    // prefill skip — wiping the rewrites right after they were applied.
     useEffect(() => {
-        setPartVariants(
-            target?.textParts && target.textParts.length > 1 ? [[...target.textParts]] : []
-        );
-    }, [target]);
+        const isPrefillTarget = !!target && !!prefill && target.id === prefill.elementId;
+        const parts = target?.textParts && target.textParts.length > 1 ? target.textParts : null;
+
+        if (isPrefillTarget) {
+            if (prefill.name) setName(prefill.name);
+            if (prefill.hypothesis) setHypothesis(prefill.hypothesis);
+        }
+
+        if (parts) {
+            // Only part-splits that match the element's actual part count are
+            // usable — the snippet maps them onto text nodes 1:1.
+            const usable = isPrefillTarget
+                ? prefill.variantParts.filter((v) => v.length === parts.length)
+                : [];
+            setPartVariants(usable.length > 0 ? usable.map((v) => [...v]) : [[...parts]]);
+        } else {
+            setPartVariants([]);
+            if (isPrefillTarget && prefill.variants.length > 0) {
+                setTextVariants([...prefill.variants]);
+            }
+        }
+    }, [target, prefill]);
 
     const cleanedStyles: StyleChanges = Object.fromEntries(
         Object.entries(styles).filter(([, v]) => v && v.trim())
