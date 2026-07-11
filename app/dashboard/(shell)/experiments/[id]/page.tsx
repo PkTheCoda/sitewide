@@ -411,11 +411,6 @@ export default function IndividualExperimentPage() {
               )
           )
         : null;
-    const rates = variants.map((v) => {
-        const c = counts[v.id] ?? { exposures: 0, conversions: 0 };
-        return c.exposures > 0 ? (c.conversions / c.exposures) * 100 : 0;
-    });
-    const maxRate = Math.max(...rates, 0.0001);
 
     // ── Actions ──────────────────────────────────────────────────────────────
     async function saveName() {
@@ -464,15 +459,79 @@ export default function IndividualExperimentPage() {
     // ── Loading / not-found states ───────────────────────────────────────────
     if (loading) {
         return (
-            <div className="flex flex-col gap-4 animate-pulse">
-                <div className="h-4 w-32 bg-stone-100 rounded" />
-                <div className="h-8 w-72 bg-stone-100 rounded" />
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    {[0, 1, 2, 3].map((i) => (
-                        <div key={i} className="h-24 bg-stone-100 rounded-xl" />
+            <div className="flex flex-col gap-y-6 max-w-300 mx-auto animate-pulse">
+                {/* Top nav */}
+                <div className="flex items-center justify-between">
+                    <div className="h-9 w-40 bg-stone-100 rounded-lg" />
+                    <div className="flex flex-col items-end gap-1.5">
+                        <div className="h-3 w-44 bg-stone-100 rounded" />
+                        <div className="h-3 w-32 bg-stone-100 rounded" />
+                    </div>
+                </div>
+
+                {/* Title + status */}
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex flex-col gap-2 min-w-0 flex-1">
+                        <div className="h-3 w-36 bg-stone-100 rounded" />
+                        <div className="h-8 w-72 max-w-full bg-stone-100 rounded" />
+                        <div className="h-4 w-full max-w-xl bg-stone-100 rounded" />
+                    </div>
+                    <div className="h-10 w-44 bg-stone-100 rounded-lg" />
+                </div>
+
+                {/* Meta strip */}
+                <div className="flex items-center justify-between flex-wrap gap-4 px-8 bg-stone-50 p-4 rounded-xl">
+                    {[0, 1, 2].map((i) => (
+                        <div key={i} className="flex flex-col gap-2 min-w-36">
+                            <div className="h-3 w-24 bg-stone-200/80 rounded" />
+                            <div className="h-5 w-40 bg-stone-200/80 rounded" />
+                        </div>
                     ))}
                 </div>
-                <div className="h-72 bg-stone-100 rounded-xl" />
+
+                {/* Variant cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 px-6 pt-2">
+                    {[0, 1].map((i) => (
+                        <div
+                            key={i}
+                            className="rounded-xl border border-stone-100 bg-white p-4 flex flex-col gap-3"
+                        >
+                            <div className="flex items-start justify-between gap-4">
+                                <div className="flex flex-col gap-2 flex-1">
+                                    <div className="h-5 w-28 bg-stone-100 rounded" />
+                                    <div className="h-3 w-48 max-w-full bg-stone-100 rounded" />
+                                </div>
+                                <div className="flex flex-col items-end gap-1.5">
+                                    <div className="h-5 w-28 bg-stone-100 rounded" />
+                                    <div className="h-3 w-36 bg-stone-100 rounded" />
+                                </div>
+                            </div>
+                            <div className="h-1.5 w-full bg-stone-100 rounded-full" />
+                            <div className="flex items-center justify-between">
+                                <div className="h-3 w-20 bg-stone-100 rounded" />
+                                <div className="h-3 w-40 bg-stone-100 rounded" />
+                            </div>
+                            <div className="h-64 bg-stone-50 rounded-lg" />
+                        </div>
+                    ))}
+                </div>
+
+                {/* Overall analytics */}
+                <div className="flex flex-col gap-4 px-6">
+                    <div className="h-6 w-48 bg-stone-100 rounded" />
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        {[0, 1, 2, 3].map((i) => (
+                            <div key={i} className="h-12 bg-stone-100 rounded-xl" />
+                        ))}
+                    </div>
+                    <div className="h-72 bg-stone-100 rounded-xl" />
+                </div>
+
+                {/* Agent activity */}
+                <div className="flex flex-col gap-3">
+                    <div className="h-6 w-56 bg-stone-100 rounded" />
+                    <div className="h-28 bg-stone-100 rounded-2xl" />
+                </div>
             </div>
         );
     }
@@ -832,7 +891,7 @@ export default function IndividualExperimentPage() {
                                         <div
                                             className={`h-full rounded-full ${isWinner ? "bg-emerald-500" : "bg-stone-300"}`}
                                             style={{
-                                                width: `${Math.max(2, (rate / maxRate) * 100)}%`,
+                                                width: `${Math.min(100, Math.max(rate === 0 ? 0 : 2, rate))}%`,
                                                 opacity: rate === 0 ? 0.25 : 1,
                                             }}
                                         />
@@ -895,28 +954,28 @@ export default function IndividualExperimentPage() {
                     <div className="bg-white border border-stone-200 rounded-t-xl border-b-0 shadow-[0_-4px_10px_0_rgba(0,0,0,0.05)] p-2 px-4 flex items-center justify-center">
                
                         <h3 className="font-medium tracking-tight">
-                            {totals.exposures.toLocaleString()}{" "}
+                            <span className="font-robot pr-2 font-semibold">{totals.exposures.toLocaleString()}</span>
                             <span className="opacity-50">Unique Visitors</span>
                         </h3> 
                     </div>
 
                     <div className="bg-white border border-stone-200 rounded-t-xl border-b-0 shadow-[0_-4px_10px_0_rgba(0,0,0,0.05)] p-2 px-4 flex items-center justify-center">
                         <h3 className="font-medium tracking-tight">
-                            {totals.conversions.toLocaleString()}{" "}
+                            <span className="font-robot pr-2 font-semibold">{totals.conversions.toLocaleString()}</span>
                             <span className="opacity-50">Overall Conversions</span>
                         </h3> 
                     </div>
 
                     <div className="bg-white border border-stone-200 rounded-t-xl border-b-0 shadow-[0_-4px_10px_0_rgba(0,0,0,0.05)] p-2 px-4 flex items-center justify-center">
                         <h3 className="font-medium tracking-tight">
-                            {`${overallRate.toFixed(0)}%`}{" "}
+                            <span className="font-robot pr-2 font-semibold">{`${overallRate.toFixed(0)}%`}</span>
                             <span className="opacity-50">Total Conversion Rate</span>
                         </h3> 
                     </div>
 
                     <div className="bg-white border border-stone-200 rounded-t-xl border-b-0 shadow-[0_-4px_10px_0_rgba(0,0,0,0.05)] p-2 px-4 flex items-center justify-center">
-                        <h3 className="font-medium tracking-tight">
-                        {daysRunning ? `${daysRunning} day${daysRunning === 1 ? "" : "s"}` : "—"}{" "}
+                        <h3 className="font-medium tracking-tight flex items-center">
+                            <span className="font-robot pr-2 font-semibold flex items-center gap-1">{daysRunning}<span>days</span></span>
                             <span className="opacity-50">Runtime</span>
                         </h3> 
                     </div>
