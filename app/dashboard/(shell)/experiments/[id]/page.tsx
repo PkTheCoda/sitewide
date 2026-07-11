@@ -459,7 +459,7 @@ export default function IndividualExperimentPage() {
     // ── Loading / not-found states ───────────────────────────────────────────
     if (loading) {
         return (
-            <div className="flex flex-col gap-y-6 max-w-300 mx-auto animate-pulse">
+            <div className="flex flex-col gap-y-6 max-w-7xl w-full mx-auto animate-pulse">
                 {/* Top nav */}
                 <div className="flex items-center justify-between">
                     <div className="h-9 w-40 bg-stone-100 rounded-lg" />
