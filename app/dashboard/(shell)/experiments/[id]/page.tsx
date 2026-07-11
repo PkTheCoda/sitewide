@@ -839,7 +839,7 @@ export default function IndividualExperimentPage() {
                             <div className="flex flex-col items-end w-full">
                                 <div
                                     key={variant.id}
-                                    className={`relative rounded-xl rounded-br-none border p-4 flex flex-col gap-3 w-full ${
+                                    className={`relative rounded-xl border p-4 flex flex-col gap-3 w-full ${
                                         isWinner ? "border-emerald-300 bg-emerald-50/60" : "border-stone-200 bg-white"
                                     }`}
                                 >
