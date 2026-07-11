@@ -44,8 +44,9 @@
 - Later: compound variants (multi-element changes per variant), variant preview (Browserless render or snippet edit mode), selector self-healing when snippet reports a miss
 
 ### 2.1 Runner + Agent skeleton (done 2026-07-06)
-- [x] `public/snippet.js` — visitor ID cookie, deterministic FNV-1a bucketing, DOM apply (text/style/src/hide) + MutationObserver re-apply, anti-flicker w/ 400ms failsafe, exposure+conversion via sendBeacon, winner serving at 100%
-- [x] `GET /api/snippet/config` (CORS-open, edge cached 60s, snippet_installed heartbeat)
+- [x] `public/snippet.js` — visitor ID cookie, deterministic FNV-1a bucketing, DOM apply (text/style/src/hide) + MutationObserver re-apply (starts pre-parse on documentElement, disconnects after 10s post-apply grace), exposure+conversion via sendBeacon, winner serving at 100%
+- [x] Zero-flash install (2026-07-11) — `GET /api/snippet/js/[siteId]` serves the snippet with the site's config baked in (edge-cached 30s), installed as one sync tag first in `<head>`: anti-flicker CSS exists before first paint → no whole-page hide, no flash, and config changes land in ~30s instead of one-page-load-later. Verified frame-by-frame in real Chrome (Browserless): 0 flash frames on sync install, textParts styling preserved, hydration rewrites re-patched, preview links + legacy `defer` installs still work. Element-scoped hide failsafe 2.5s; legacy whole-page hide still capped at 400ms
+- [x] `GET /api/snippet/config` (CORS-open, edge cached 60s, snippet_installed heartbeat) — legacy path + background refresh; config building shared via `lib/snippetConfig.ts`
 - [x] `POST /api/snippet/event` (validates experiment/variant, upsert w/ ignoreDuplicates — DB dedupes per visitor)
 - [x] `POST /api/agent/evaluate` — the agent loop: perceive (unique exposures/conversions) → decide (min sample + two-proportion z-test) → act (promote winner / keep control / continue) → log to `agent_actions`
 - [x] `lib/stats.ts` (z-test + normal CDF), `lib/supabaseAdmin.ts` (service role, server-only)

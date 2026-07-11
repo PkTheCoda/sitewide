@@ -9,7 +9,11 @@ export default function SnippetInstructions({ siteId }: { siteId: string }) {
     const [copied, setCopied] = useState(false);
 
     const origin = typeof window !== "undefined" ? window.location.origin : "";
-    const tag = `<script defer src="${origin}/snippet.js" data-site-id="${siteId}"></script>`;
+    // Synchronous on purpose — NO defer/async. The script must run before the
+    // browser paints, or visitors see the original content flash to the
+    // variant. The route bakes this site's config into the (edge-cached)
+    // response, so the cost is one small blocking request.
+    const tag = `<script src="${origin}/api/snippet/js/${siteId}"></script>`;
 
     async function copy() {
         await navigator.clipboard.writeText(tag);
@@ -23,8 +27,11 @@ export default function SnippetInstructions({ siteId }: { siteId: string }) {
                 Install the snippet to start serving this experiment
             </p>
             <p className="text-xs text-stone-500 leading-relaxed">
-                Paste this inside the <code className="text-orange-700">&lt;head&gt;</code> of
-                your site. One tag covers every page and every experiment on this domain.
+                Paste this at the <span className="font-medium">top</span> of your site&apos;s{" "}
+                <code className="text-orange-700">&lt;head&gt;</code>, before other scripts —
+                and don&apos;t add <code className="text-orange-700">defer</code> or{" "}
+                <code className="text-orange-700">async</code> (that&apos;s what keeps your page
+                from flashing). One tag covers every page and every experiment on this domain.
             </p>
             <div className="flex items-start gap-2">
                 <pre className="flex-1 text-[11px] text-stone-700 bg-white border border-stone-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">

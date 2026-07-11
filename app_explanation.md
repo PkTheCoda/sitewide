@@ -78,11 +78,16 @@ Flow and files:
 
 What we track per goal (deliberate limits — this is not analytics): **click goals** (visitor clicks a specific element) and **pageview goals** (visitor reaches a path — how form submits get tracked without touching the form). No bounce rate, scroll depth, or session metrics, ever.
 
-## The JS Snippet (next build — design settled)
+## The JS Snippet (built, zero-flash as of 2026-07-11)
 
-~100 lines vanilla JS in the founder's `<head>` with `data-site-id`:
-1. Anti-flicker: hide body (or targets) with a ~400ms failsafe; total apply time must stay <100ms.
-2. Fetch config (edge-cached per site+path; later: per-site generated script so config ships in the file).
+Vanilla JS installed as ONE synchronous tag first in the founder's `<head>`:
+`<script src="…/api/snippet/js/SITE_ID"></script>` — that route serves the snippet
+with the site's config baked in (edge-cached ~30s), so anti-flicker CSS and payloads
+exist before first paint. No defer/async: a deferred script runs after paint is
+possible, which is what causes the original→variant flash (the incumbents' trick is
+sync-in-head too). Legacy `defer` + `data-site-id` installs still work via config fetch.
+1. Anti-flicker: element-scoped `visibility:hidden` on targeted selectors only (2.5s failsafe); whole-page hide exists only on the legacy path's first visit (400ms cap).
+2. Config ships inside the script (legacy: fetch, edge-cached per site).
 3. Visitor ID: first-party cookie, random UUID. **Deterministic bucketing**: `hash(visitorId + experimentId) % 100` mapped onto variant weights — sticky across pages/visits with no server round-trip, independent across experiments.
 4. Apply payload (text swap / styles / src swap / hide) + **MutationObserver re-apply** — React/Next sites wipe one-time DOM patches on hydration and client navigation.
 5. Events: exposure (denominator!) + conversion, via `sendBeacon`, deduped by the DB unique index.

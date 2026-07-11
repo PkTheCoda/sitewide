@@ -1,7 +1,17 @@
 /**
  * Sitewide experiment runner.
  *
- * Install: <script defer src="https://YOUR-SITEWIDE-DOMAIN/snippet.js" data-site-id="YOUR_SITE_ID"></script>
+ * Install (current): <script src="https://YOUR-SITEWIDE-DOMAIN/api/snippet/js/YOUR_SITE_ID"></script>
+ *   Synchronous, FIRST thing in <head>. That route serves this file with the
+ *   site's config baked in (edge-cached), so the anti-flicker CSS and the
+ *   variant payloads exist before the browser paints anything. A deferred
+ *   script runs after first paint is already possible — the original content
+ *   shows, then blinks to the variant. Sync-in-head is how every vendor in
+ *   this category avoids that; the cost is a few ms of parse blocking on a
+ *   small cached file.
+ *
+ * Install (legacy, still supported):
+ *   <script defer src="https://YOUR-SITEWIDE-DOMAIN/snippet.js" data-site-id="YOUR_SITE_ID"></script>
  *
  * Debug mode: add ?sw_debug=1 to any URL on the site (or run
  * `localStorage.sw_debug = "1"` in the console) and the snippet logs every
@@ -15,16 +25,19 @@
  *
  * What it does on every page load:
  *   1. Reads/creates a first-party visitor id cookie (sw_vid).
- *   2. Loads the site's experiment config — from localStorage cache when
- *      available (instant), from the network on first visit. The cache is
- *      refreshed in the background on every load, so config changes take
- *      effect one page load later.
+ *   2. Loads the site's experiment config — embedded in this very file on the
+ *      sync install (available before paint, changes land in ~30s). Legacy
+ *      installs fall back to localStorage cache, then the network; that cache
+ *      refreshes in the background, so config changes take effect one page
+ *      load later.
  *   3. Assigns the visitor to a variant DETERMINISTICALLY — hash(visitorId +
  *      experimentId) mapped onto variant weights. Same visitor, same variant,
  *      every page, every visit, no stored assignments.
  *   4. Applies the variant's change and re-applies via MutationObserver —
  *      client-rendered React/Next sites build the DOM late and rewrite it on
- *      hydration, so one-shot patching is not enough.
+ *      hydration, so one-shot patching is not enough. The observer starts on
+ *      documentElement immediately (works while HTML is still streaming in)
+ *      and disconnects a grace period after everything is applied.
  *   5. Reports exposure + conversion events as text/plain beacons (CORS
  *      "simple requests" — no preflight). The server dedupes per visitor.
  *
@@ -33,19 +46,26 @@
  *     until their change is ACTUALLY applied. On client-rendered apps the
  *     element may not exist for hundreds of ms; hiding is by CSS rule, so it
  *     covers the element from the instant the framework creates it — the
- *     visitor never sees the original text flash before the swap.
- *   - Whole-page hide is used only on a visitor's first-ever load (no cache
- *     yet), and only until the config arrives — then it downgrades to the
- *     element-scoped hide above.
- *   - A 400ms failsafe releases everything no matter what: a slow fetch or a
- *     missing element can never hold the page hostage.
+ *     visitor never sees the original text flash before the swap. On the sync
+ *     install this rule exists before first paint, so nothing ever flashes.
+ *   - Whole-page hide exists ONLY on the legacy path, on a visitor's
+ *     first-ever load (no cache, config must be fetched), and only until the
+ *     config arrives — then it downgrades to the element-scoped hide above.
+ *   - Failsafes: the whole-page hide is capped at 400ms (a slow fetch can
+ *     never blank the page); element-scoped hides are capped at 2500ms
+ *     (they're invisible-by-design — layout is kept, only tested elements are
+ *     covered — so a longer leash for slow mobile hydration costs nothing).
  */
 (function () {
   "use strict";
 
   var script = document.currentScript;
   if (!script) return;
-  var SITE_ID = script.getAttribute("data-site-id");
+  // Sync install: /api/snippet/js/[siteId] prepends `var __SW_EMBED__ =
+  // {siteId, config}` to this file — site id and config with zero extra
+  // requests. The typeof guard keeps the static /snippet.js file working.
+  var EMBED = typeof __SW_EMBED__ !== "undefined" ? __SW_EMBED__ : null;
+  var SITE_ID = (EMBED && EMBED.siteId) || script.getAttribute("data-site-id");
   if (!SITE_ID) return;
   var API = new URL(script.src).origin;
   var CACHE_KEY = "sw_cfg_" + SITE_ID;
@@ -70,8 +90,10 @@
   // selectors, and is removed entirely on release.
   var hideEl = null;
   var released = false;
-  function setHide(cssText) {
+  var hideMode = null; // "page" (legacy first visit only) | "elements"
+  function setHide(cssText, mode) {
     if (released) return;
+    hideMode = mode;
     if (!hideEl) {
       hideEl = document.createElement("style");
       document.documentElement.appendChild(hideEl);
@@ -85,9 +107,16 @@
     hideEl = null;
     dbg("released page (" + reason + ")");
   }
+  // Two-tier failsafe. A whole-page hide (legacy path, first visit, config
+  // still in flight) may never exceed 400ms — a slow fetch can't blank the
+  // page. Element-scoped hides keep layout and cover only tested elements,
+  // so they get a longer leash for slow mobile hydration.
   setTimeout(function () {
-    release("400ms failsafe");
+    if (hideMode === "page") release("400ms first-visit failsafe");
   }, 400);
+  setTimeout(function () {
+    release("2500ms failsafe");
+  }, 2500);
 
   // ── Preview links (?sw_preview=<token>) ───────────────────────────────────
   // The token is base64url({ s: selector, f: fallback, p: payload }), built
@@ -111,32 +140,19 @@
     if (preview && preview.p) {
       dbg("PREVIEW MODE (link): applying", preview.p, "to", preview.s);
       // Same anti-flicker as a real run: hide the target until the change
-      // lands (the 400ms failsafe above still caps the wait).
-      if (preview.s) setHide(preview.s + "{visibility:hidden !important}");
+      // lands (the element-scoped failsafe above still caps the wait).
+      if (preview.s) setHide(preview.s + "{visibility:hidden !important}", "elements");
       var previewApplied = false;
-      var applyPreview = function () {
+      observeAndApply(function () {
         var el = findElement(preview.s, preview.f);
-        if (!el) return;
+        if (!el) return false;
         applyPayload(el, preview.p);
         if (!previewApplied) {
           previewApplied = true;
           release("preview applied");
         }
-      };
-      var startPreview = function () {
-        applyPreview();
-        // Keep re-applying through hydration/re-renders, same as a real run.
-        new MutationObserver(applyPreview).observe(document.body, {
-          childList: true,
-          subtree: true,
-          characterData: true,
-        });
-      };
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", startPreview);
-      } else {
-        startPreview();
-      }
+        return true;
+      });
       return; // never falls through to bucketing or tracking
     }
   }
@@ -271,6 +287,42 @@
         }
       }
     }
+  }
+
+  // ── Apply loop ────────────────────────────────────────────────────────────
+  // Runs applyFn now, then re-runs it on every DOM mutation until it reports
+  // done (returns true) — and for a grace period after that, because React
+  // hydration can rewrite already-patched elements seconds later. Observing
+  // documentElement (not body) means this works while the HTML is still
+  // streaming in: the sync install runs before <body> even exists, and the
+  // parser's own node insertions fire the observer, so changes apply the
+  // moment their target is parsed — usually before it's ever painted.
+  // The observer always disconnects (grace after done, hard stop otherwise):
+  // no permanent per-mutation querySelector work on chatty apps.
+  function observeAndApply(applyFn) {
+    var GRACE_MS = 10000; // survives hydration rewrites after everything applied
+    var HARD_STOP_MS = 30000; // absolute cap even if a target never appears
+    var graceTimer = null;
+    var observer = new MutationObserver(check);
+    function stop(why) {
+      observer.disconnect();
+      dbg("apply loop stopped (" + why + ")");
+    }
+    function check() {
+      if (!applyFn() || graceTimer) return;
+      graceTimer = setTimeout(function () {
+        stop("done + grace period over");
+      }, GRACE_MS);
+    }
+    check();
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    setTimeout(function () {
+      if (!graceTimer) stop("hard stop — some targets never appeared");
+    }, HARD_STOP_MS);
   }
 
   // ── Event reporting ───────────────────────────────────────────────────────
@@ -424,7 +476,7 @@
     // From here on, hide ONLY the elements we're about to change. On
     // client-rendered apps (React/Vite) these elements may not exist yet —
     // a CSS rule covers them from the instant the framework creates them.
-    setHide(hideCssFor(pending));
+    setHide(hideCssFor(pending), "elements");
 
     // Returns true when every pending change has been applied at least once.
     function applyAll() {
@@ -443,52 +495,51 @@
       return allApplied;
     }
 
-    // Apply now; keep re-applying as the framework renders/hydrates/re-renders.
-    // Only release the hide once everything is actually applied (or the 400ms
-    // failsafe fires) — releasing earlier would flash the original content.
-    function start() {
-      if (applyAll()) release("all changes applied");
-      var observer = new MutationObserver(function () {
-        if (applyAll() && !released) release("all changes applied (late render)");
-      });
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      });
-    }
-
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", start);
-    } else {
-      start();
-    }
+    // Apply as elements appear (even mid-parse); only release the hide once
+    // everything is actually applied (or a failsafe fires) — releasing
+    // earlier would flash the original content.
+    observeAndApply(function () {
+      var done = applyAll();
+      if (done && !released) release("all changes applied");
+      return done;
+    });
   }
 
   // ── Main ─────────────────────────────────────────────────────────────────
-  var cached = readCache();
-
-  if (cached) {
-    dbg("config source: localStorage cache (refreshing in background)");
-    run(cached);
-    fetchConfig()
-      .then(function (config) {
-        writeCache(config);
-        dbg("background config refresh done — takes effect next page load");
-      })
-      .catch(function () {});
+  if (EMBED && EMBED.config) {
+    // Sync install: config shipped inside this file, available before first
+    // paint. Element-scoped hiding only — the whole-page hide never runs on
+    // this path, and there is no config request at all. The cache write keeps
+    // the legacy path warm in case the install method ever changes.
+    dbg("config source: embedded in script (sync install)");
+    writeCache(EMBED.config);
+    run(EMBED.config);
   } else {
-    dbg("config source: network (first visit on this device)");
-    // Nothing to go on yet — hide the page until config arrives (400ms cap).
-    // run() immediately downgrades this to element-only hiding.
-    setHide("html{opacity:0 !important}");
-    fetchConfig()
-      .then(function (config) {
-        writeCache(config);
-        run(config);
-      })
-      .catch(function () {
-        release("config fetch failed");
-      });
+    var cached = readCache();
+
+    if (cached) {
+      dbg("config source: localStorage cache (refreshing in background)");
+      run(cached);
+      fetchConfig()
+        .then(function (config) {
+          writeCache(config);
+          dbg("background config refresh done — takes effect next page load");
+        })
+        .catch(function () {});
+    } else {
+      dbg("config source: network (first visit on this device)");
+      // Nothing to go on yet — hide the page until config arrives (400ms cap).
+      // run() immediately downgrades this to element-only hiding.
+      setHide("html{opacity:0 !important}", "page");
+      fetchConfig()
+        .then(function (config) {
+          writeCache(config);
+          run(config);
+        })
+        .catch(function (err) {
+          dbg("config fetch/run failed:", err && err.message ? err.message : err);
+          release("config fetch failed");
+        });
+    }
   }
 })();
