@@ -32,7 +32,6 @@ const sidebarLinks: SidebarLink[] = [
   { section: "experiments", name: "Experiments", href: "/dashboard/experiments", icon: LuFlaskConical },
   { section: "analyses", name: "Analyses", href: "/dashboard/analyses", icon: LuFileSearch },
   { section: "analytics", name: "Analytics", href: "/dashboard/analytics", icon: LuChartBar },
-  { section: "settings", name: "Settings", href: "/dashboard/settings", icon: LuSettings },
 ]
 
 function getActiveSection(pathname: string): Section {

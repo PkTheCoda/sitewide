@@ -1,5 +1,5 @@
-import PlaceholderSection from "@/components/dashboard/PlaceholderSection"
+import SettingsSection from "@/components/dashboard/SettingsSection"
 
 export default function DashboardSettingsPage() {
-  return <PlaceholderSection title="Settings" />
+  return <SettingsSection />
 }
