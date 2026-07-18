@@ -52,11 +52,21 @@
 - [x] `lib/stats.ts` (z-test + normal CDF), `lib/supabaseAdmin.ts` (service role, server-only)
 - [x] Activation flow: `activateExperiment` upserts `sites` row by domain, links experiment, snippet install instructions UI
 - [x] Dashboard sections (no routing): Overview (working analyze bar → edge fn → redirect to report), Analyses (report cards), Experiments (expandable cards w/ variants + live results + activate/pause)
-- [ ] Vercel cron config for weekly `/api/agent/evaluate`
+- [x] Vercel cron for `/api/agent/evaluate` — DAILY (`0 9 * * *`) as of 2026-07-17; was weekly and silently 401'd on 2026-07-13 (CRON_SECRET missing in Vercel env — fixed 2026-07-14)
 - [ ] Rate limiting on event ingest
 - [ ] Resend email digest (`POST /api/cron/email`)
 - [ ] AI comment → one-click experiment
-- [ ] Selector self-healing loop (snippet reports miss → re-crawl → re-match)
+- [ ] Selector self-healing loop (agent now DETECTS + pauses on misses; re-crawl/re-match still to do)
+
+### 2.2 Agent hardening (done 2026-07-17) — see roadmap.md Phase 1
+- [x] Circuit breaker: harm gate on every daily run — challenger losing at p<0.01 (≥25 exposures/arm) is stopped pre-min-sample; all-harmful → complete w/ control, some → `killed_at` (variant keeps bucket range, snippet serves control experience, no events). Win gate unchanged: fixed horizon, p<0.05
+- [x] Heartbeats: `run_started`/`run_finished` agent_actions rows (null experiment_id) per run — a missing heartbeat is the cron alarm
+- [x] Selector-miss: snippet beacons `selector_miss` at 8s unapplied; agent pauses (`paused_broken`) at ≥5 miss visitors AND ≥20% of variant exposures
+- [x] Proposal failures/skips logged (`proposal_failed`/`proposal_skipped`)
+- [x] min_sample_size floor 100 (evaluator + agent drafts)
+- [x] `POST /api/agent/propose` dry-run health check for the proposal pipeline (verified live: Claude proposed against real report, wrote nothing)
+- [x] Migration `20260717_agent_hardening.sql`; supabase migration history repaired — `db push` works from CLI now
+- [x] Tests: 21 API/DB assertions (synthetic experiments through real routes) + 8 jsdom snippet assertions, all passing
 - [ ] Playwright/Browserless variant preview render
 
 ---
