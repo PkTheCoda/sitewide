@@ -5,20 +5,46 @@ import { proposeNextExperiment } from "@/lib/propose";
 // ─── The autonomous evaluation loop ─────────────────────────────────────────
 //
 // This is the "agentic" core: for every running experiment it
-//   1. PERCEIVES  — aggregates unique exposures/conversions per variant
-//   2. DECIDES    — enforces min sample size, runs the significance test
-//   3. ACTS       — promotes the winner (status=completed + winner_variant_id;
+//   1. PERCEIVES  — aggregates unique exposures/conversions/selector-misses
+//                   per variant
+//   2. DECIDES    — health check (is the data trustworthy?), then the harm
+//                   gate (is a variant hurting conversions?), then the
+//                   min-sample gate and the significance test
+//   3. ACTS       — pauses broken experiments, kills losing variants,
+//                   promotes the winner (status=completed + winner_variant_id;
 //                   the snippet then serves that variant to 100% of visitors),
 //                   or keeps control, or waits for more data
 //   4. REMEMBERS  — writes every decision + its reasoning to agent_actions,
-//                   an audit trail the founder can read
+//                   an audit trail the founder can read. Each run is also
+//                   bracketed by run_started/run_finished heartbeat rows
+//                   (experiment_id null): a MISSING heartbeat is how we detect
+//                   the cron silently not running — which happened 2026-07-13.
 //
-// Trigger: Vercel Cron (weekly) or manually:
+// Trigger: Vercel Cron (daily) or manually:
 //   curl -X POST https://.../api/agent/evaluate -H "authorization: Bearer $AGENT_SECRET"
 //
-// Statistical honesty: decisions only happen when every arm has at least
-// min_sample_size exposures, and this runs on a fixed cadence — not on every
-// event — which keeps us clear of the peeking problem.
+// Statistical honesty: WIN decisions only happen when every live arm has at
+// least min_sample_size exposures, at a fixed daily cadence — clear of the
+// peeking problem. The HARM gate (circuit breaker) intentionally peeks daily,
+// but only ever stops variants, at a much stricter threshold (p < 0.01): a
+// slightly inflated false-kill rate is a fair price for not serving a losing
+// variant for a week. It can never declare a winner.
+
+// Circuit breaker: a challenger this confidently below control gets killed on
+// any run, before min-sample. HARM_MIN_EXPOSURES keeps tiny-n flukes out.
+const HARM_P = 0.01;
+const HARM_MIN_EXPOSURES = 25;
+
+// Health check: pause the experiment when this many unique visitors reported
+// the target element missing AND they are a meaningful share of the variant's
+// traffic (a redesigned page breaks selectors for everyone; a slow phone that
+// hydrates after the 8s reporting timer is a one-off).
+const MISS_MIN_VISITORS = 5;
+const MISS_MIN_RATE = 0.2;
+
+// Floor for min_sample_size: below this a "significant" result is mostly
+// noise, whatever the founder typed into the builder.
+const SAMPLE_FLOOR = 100;
 
 // Two entry points, same loop:
 //   POST — manual trigger (curl with AGENT_SECRET) for testing
@@ -40,6 +66,7 @@ async function runEvaluation(request: Request) {
     }
 
     const supabase = getSupabaseAdmin();
+    const startedAt = Date.now();
 
     const { data: experiments, error } = await supabase
         .from("experiments")
@@ -47,8 +74,15 @@ async function runEvaluation(request: Request) {
         .eq("status", "running");
 
     if (error) {
+        // Even a failed run leaves a heartbeat — silence is never ambiguous.
+        await log(supabase, null, "run_finished", { error: error.message, duration_ms: Date.now() - startedAt });
         return Response.json({ error: error.message }, { status: 500 });
     }
+
+    await log(supabase, null, "run_started", {
+        method: request.method,
+        running_experiments: experiments?.length ?? 0,
+    });
 
     const results = [];
 
@@ -61,6 +95,13 @@ async function runEvaluation(request: Request) {
             results.push({ experiment_id: experiment.id, decision: "error", message });
         }
     }
+
+    await log(supabase, null, "run_finished", {
+        evaluated: results.length,
+        decisions: results.map((r) => ({ experiment_id: r.experiment_id, decision: r.decision })),
+        errors: results.filter((r) => r.decision === "error").length,
+        duration_ms: Date.now() - startedAt,
+    });
 
     return Response.json({ evaluated: results.length, results });
 }
@@ -80,7 +121,7 @@ async function evaluateExperiment(
     const [{ data: variants }, { data: events }] = await Promise.all([
         supabase
             .from("experiment_variants")
-            .select("id, name, is_control, position")
+            .select("id, name, is_control, position, killed_at")
             .eq("experiment_id", experiment.id)
             .order("position"),
         supabase
@@ -99,12 +140,15 @@ async function evaluateExperiment(
     // experiment page — not evidence about the variant).
     const exposed = new Map<string, Set<string>>(); // variant_id -> visitor set
     const converted = new Map<string, Set<string>>();
+    const missed = new Map<string, Set<string>>(); // selector_miss reporters
     for (const v of variants) {
         exposed.set(v.id, new Set());
         converted.set(v.id, new Set());
+        missed.set(v.id, new Set());
     }
     for (const e of events ?? []) {
         if (e.event_type === "exposure") exposed.get(e.variant_id)?.add(e.visitor_id);
+        if (e.event_type === "selector_miss") missed.get(e.variant_id)?.add(e.visitor_id);
     }
     for (const e of events ?? []) {
         if (e.event_type === "conversion" && exposed.get(e.variant_id)?.has(e.visitor_id)) {
@@ -112,37 +156,127 @@ async function evaluateExperiment(
         }
     }
 
-    const stats: VariantStats[] = variants.map((v) => {
+    // Killed variants keep their bucket range but serve the control experience
+    // and send no events (see snippet) — they are out of every decision below.
+    const live = variants.filter((v) => !v.killed_at);
+    const statFor = (v: { id: string }): VariantStats => {
         const n = exposed.get(v.id)!.size;
         const c = converted.get(v.id)!.size;
         return { variantId: v.id, exposures: n, conversions: c, rate: n > 0 ? c / n : 0 };
-    });
+    };
+    const stats: VariantStats[] = live.map(statFor);
 
-    const control = stats[variants.findIndex((v) => v.is_control)];
+    const controlIndex = live.findIndex((v) => v.is_control);
+    if (controlIndex === -1) throw new Error("experiment has no live control variant");
+    const control = stats[controlIndex];
     const challengers = stats.filter((s) => s !== control);
 
-    // ── 2. Decide ────────────────────────────────────────────────────────────
-    const minSample = experiment.min_sample_size ?? 1000;
-    const underSampled = stats.some((s) => s.exposures < minSample);
+    // ── 2a. Health check — is this data even trustworthy? ────────────────────
+    // Visitors bucketed into a variant whose element can't be found see the
+    // ORIGINAL page while being counted as variant exposures. That's not an
+    // experiment any more; pause it and tell the founder, don't keep testing.
+    for (const v of live) {
+        if (v.is_control) continue;
+        const misses = missed.get(v.id)!.size;
+        const exposures = exposed.get(v.id)!.size;
+        if (misses >= MISS_MIN_VISITORS && misses / Math.max(exposures, 1) >= MISS_MIN_RATE) {
+            await supabase.from("experiments").update({ status: "paused" }).eq("id", experiment.id);
+            const detail = {
+                reason: "selector_miss",
+                variant_id: v.id,
+                variant_name: v.name,
+                miss_visitors: misses,
+                exposure_visitors: exposures,
+                stats,
+            };
+            await log(supabase, experiment.id, "paused_broken", detail);
+            return { experiment_id: experiment.id, name: experiment.name, decision: "paused_broken", ...detail };
+        }
+    }
+
+    // ── 2b. Harm gate — the circuit breaker ──────────────────────────────────
+    const comparisons = compareVariants(control, challengers);
+    const harmful = comparisons.filter(
+        (c) =>
+            c.variantRate < c.controlRate &&
+            c.pValue < HARM_P &&
+            control.exposures >= HARM_MIN_EXPOSURES &&
+            challengers.find((s) => s.variantId === c.variantId)!.exposures >= HARM_MIN_EXPOSURES
+    );
+
+    if (harmful.length > 0 && harmful.length === challengers.length) {
+        // Every live challenger is confidently hurting conversions — end the
+        // test now, keep the original. Same outcome as the fixed-horizon
+        // "all worse" path, it just refuses to wait for min-sample while
+        // visitors are being lost.
+        await supabase
+            .from("experiments")
+            .update({
+                status: "completed",
+                winner_variant_id: control.variantId,
+                ended_at: new Date().toISOString(),
+            })
+            .eq("id", experiment.id);
+
+        const detail = { reason: "harm_gate", comparisons, stats };
+        await log(supabase, experiment.id, "kept_control", detail);
+
+        const proposal = await propose(
+            supabase,
+            experiment.id,
+            `Every variant performed significantly WORSE than the original — the agent's circuit ` +
+                `breaker ended the test early and kept the original copy. Avoid proposing more of the same idea.`
+        );
+        return { experiment_id: experiment.id, name: experiment.name, decision: "kept_control", proposal, ...detail };
+    }
+
+    const kills = [];
+    for (const h of harmful) {
+        // Some (not all) challengers are losing badly: kill just those. Their
+        // visitors get the control experience starting with the next config
+        // refresh (~30s); the surviving arms' assignments are untouched.
+        const variant = live.find((v) => v.id === h.variantId)!;
+        await supabase
+            .from("experiment_variants")
+            .update({ killed_at: new Date().toISOString() })
+            .eq("id", h.variantId);
+        const detail = {
+            variant_id: h.variantId,
+            variant_name: variant.name,
+            control_rate: h.controlRate,
+            variant_rate: h.variantRate,
+            p_value: h.pValue,
+            stats,
+        };
+        await log(supabase, experiment.id, "killed_variant", detail);
+        kills.push(detail);
+    }
+    // The experiment continues with the surviving arms.
+    const liveChallengers = challengers.filter((s) => !harmful.some((h) => h.variantId === s.variantId));
+    const liveComparisons = comparisons.filter((c) => !harmful.some((h) => h.variantId === c.variantId));
+
+    // ── 2c. Sample gate, then the honest fixed-horizon test ──────────────────
+    const minSample = Math.max(SAMPLE_FLOOR, experiment.min_sample_size ?? 1000);
+    const liveStats = [control, ...liveChallengers];
+    const underSampled = liveStats.some((s) => s.exposures < minSample);
 
     if (underSampled) {
-        const detail = { reason: "insufficient_sample", min_sample_size: minSample, stats };
+        const detail = { reason: "insufficient_sample", min_sample_size: minSample, stats, kills };
         await log(supabase, experiment.id, "evaluated", detail);
         return { experiment_id: experiment.id, name: experiment.name, decision: "continue", ...detail };
     }
 
-    const comparisons = compareVariants(control, challengers);
-    const significantWinners = comparisons
+    const significantWinners = liveComparisons
         .filter((c) => c.significant && c.variantRate > c.controlRate)
         .sort((a, b) => b.variantRate - a.variantRate);
     const allSignificantlyWorse =
-        comparisons.length > 0 &&
-        comparisons.every((c) => c.significant && c.variantRate < c.controlRate);
+        liveComparisons.length > 0 &&
+        liveComparisons.every((c) => c.significant && c.variantRate < c.controlRate);
 
     // ── 3. Act ───────────────────────────────────────────────────────────────
     if (significantWinners.length > 0) {
         const winner = significantWinners[0];
-        const winnerVariant = variants.find((v) => v.id === winner.variantId)!;
+        const winnerVariant = live.find((v) => v.id === winner.variantId)!;
 
         if (experiment.auto_promote) {
             await supabase
@@ -190,7 +324,7 @@ async function evaluateExperiment(
             })
             .eq("id", experiment.id);
 
-        const detail = { reason: "all_variants_worse", comparisons, stats };
+        const detail = { reason: "all_variants_worse", comparisons: liveComparisons, stats };
         await log(supabase, experiment.id, "kept_control", detail);
 
         // Settled the other way — every challenger lost. Still worth closing
@@ -204,14 +338,14 @@ async function evaluateExperiment(
         return { experiment_id: experiment.id, name: experiment.name, decision: "kept_control", proposal, ...detail };
     }
 
-    const detail = { reason: "no_significant_difference_yet", comparisons, stats };
+    const detail = { reason: "no_significant_difference_yet", comparisons: liveComparisons, stats, kills };
     await log(supabase, experiment.id, "evaluated", detail);
-    return { experiment_id: experiment.id, name: experiment.name, decision: "continue", ...detail };
+    return { experiment_id: experiment.id, name: experiment.name, decision: kills.length > 0 ? "killed_variant" : "continue", ...detail };
 }
 
 async function log(
     supabase: ReturnType<typeof getSupabaseAdmin>,
-    experiment_id: string,
+    experiment_id: string | null,
     action: string,
     detail: Record<string, unknown>
 ) {
@@ -220,17 +354,23 @@ async function log(
 
 // Best-effort wrapper: a failed proposal (Claude down, key missing, bad
 // output) must never fail the evaluation itself — the promotion already
-// happened and is the thing that matters.
+// happened and is the thing that matters. But every non-proposal is LOGGED:
+// "the agent quietly stopped closing the loop" must be visible on the
+// dashboard, not buried in function logs.
 async function propose(
     supabase: ReturnType<typeof getSupabaseAdmin>,
     experiment_id: string,
     outcome_summary: string
 ) {
     try {
-        return await proposeNextExperiment(supabase, experiment_id, outcome_summary);
+        const result = await proposeNextExperiment(supabase, experiment_id, outcome_summary);
+        if (!result.proposed) {
+            await log(supabase, experiment_id, "proposal_skipped", { reason: result.reason });
+        }
+        return result;
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error("proposal failed:", message);
+        await log(supabase, experiment_id, "proposal_failed", { message });
         return { proposed: false as const, reason: `error: ${message}` };
     }
 }

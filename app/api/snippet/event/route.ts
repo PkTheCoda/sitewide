@@ -33,7 +33,10 @@ export async function POST(request: Request) {
     if (!experiment_id || !variant_id || !visitor_id) {
         return Response.json({ error: "missing fields" }, { status: 400, headers: CORS });
     }
-    if (event_type !== "exposure" && event_type !== "conversion") {
+    // selector_miss = the snippet couldn't find the variant's target element
+    // (selector + fallback both failed) — the agent pauses experiments where
+    // this happens to a meaningful share of visitors.
+    if (event_type !== "exposure" && event_type !== "conversion" && event_type !== "selector_miss") {
         return Response.json({ error: "bad event_type" }, { status: 400, headers: CORS });
     }
     if (visitor_id.length > 64) {

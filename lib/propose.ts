@@ -64,6 +64,10 @@ Rules:
 
 type ProposeResult =
     | { proposed: true; experiment_id: string; name: string }
+    // dry_run: everything ran (context building, Claude call, validation)
+    // but nothing was written — used to health-check the proposal pipeline
+    // without waiting for a real experiment to complete.
+    | { proposed: true; dry_run: true; name: string; hypothesis: string; variants: string[]; rationale: string }
     | { proposed: false; reason: string };
 
 type ClaudeProposal = {
@@ -87,8 +91,10 @@ function splitWeights(groupCount: number): number[] {
 export async function proposeNextExperiment(
     supabase: ReturnType<typeof getSupabaseAdmin>,
     completed_experiment_id: string,
-    outcome_summary: string
+    outcome_summary: string,
+    options?: { dryRun?: boolean }
 ): Promise<ProposeResult> {
+    const dryRun = options?.dryRun ?? false;
     // ── 1. Load the finished experiment + its context ────────────────────────
     const { data: exp } = await supabase
         .from("experiments")
@@ -99,16 +105,19 @@ export async function proposeNextExperiment(
     if (!exp.report_id) return { proposed: false, reason: "no report linked — nothing to propose from" };
 
     // Guardrail: one pending proposal per founder. Don't pile up drafts the
-    // user hasn't looked at yet.
-    const { data: pending } = await supabase
-        .from("experiments")
-        .select("id")
-        .eq("user_id", exp.user_id)
-        .eq("created_by", "agent")
-        .eq("status", "draft")
-        .limit(1);
-    if (pending && pending.length > 0) {
-        return { proposed: false, reason: "a previous agent proposal is still awaiting review" };
+    // user hasn't looked at yet. (Skipped on dry runs — they exist to test
+    // the pipeline, which a waiting draft shouldn't block.)
+    if (!dryRun) {
+        const { data: pending } = await supabase
+            .from("experiments")
+            .select("id")
+            .eq("user_id", exp.user_id)
+            .eq("created_by", "agent")
+            .eq("status", "draft")
+            .limit(1);
+        if (pending && pending.length > 0) {
+            return { proposed: false, reason: "a previous agent proposal is still awaiting review" };
+        }
     }
 
     const [{ data: report }, { data: comments }, { data: siblings }] = await Promise.all([
@@ -197,6 +206,17 @@ export async function proposeNextExperiment(
         return { proposed: false, reason: "model produced no usable variants — skipped" };
     }
 
+    if (dryRun) {
+        return {
+            proposed: true,
+            dry_run: true,
+            name: proposal.name,
+            hypothesis: proposal.hypothesis,
+            variants,
+            rationale: proposal.rationale,
+        };
+    }
+
     // ── 5. Write the draft experiment + variant rows ─────────────────────────
     const { data: created, error: expError } = await supabase
         .from("experiments")
@@ -216,7 +236,9 @@ export async function proposeNextExperiment(
             goal_selector: exp.goal_selector,
             goal_fallback: exp.goal_fallback,
             goal_page_path: exp.goal_page_path,
-            min_sample_size: exp.min_sample_size,
+            // Same floor the evaluator enforces — a draft below it would just
+            // sit in "insufficient sample" forever.
+            min_sample_size: Math.max(100, exp.min_sample_size ?? 1000),
             auto_promote: exp.auto_promote,
             status: "draft",
             created_by: "agent",

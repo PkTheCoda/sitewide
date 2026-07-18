@@ -24,7 +24,7 @@ export async function buildSnippetConfig(siteId: string): Promise<SnippetConfig>
             // name which one to follow or PostgREST errors out.
             `id, page_url, selector, selector_fallback, change_type, status,
              goal_type, goal_selector, goal_fallback, goal_page_path, winner_variant_id,
-             experiment_variants!experiment_id ( id, is_control, payload, weight, position )`
+             experiment_variants!experiment_id ( id, is_control, payload, weight, position, killed_at )`
         )
         .eq("site_id", siteId)
         .in("status", ["running", "completed"]);
@@ -60,11 +60,16 @@ export async function buildSnippetConfig(siteId: string): Promise<SnippetConfig>
                 winner_variant_id: exp.winner_variant_id,
                 variants: (exp.experiment_variants ?? [])
                     .sort((a: { position: number }, b: { position: number }) => a.position - b.position)
-                    .map((v: { id: string; is_control: boolean; payload: unknown; weight: number }) => ({
+                    .map((v: { id: string; is_control: boolean; payload: unknown; weight: number; killed_at: string | null }) => ({
                         id: v.id,
                         is_control: v.is_control,
                         payload: v.payload,
                         weight: v.weight,
+                        // Killed by the agent's circuit breaker: the variant keeps
+                        // its bucket range (so other arms' assignments are stable)
+                        // but the snippet serves it the control experience and
+                        // sends no events.
+                        killed: !!v.killed_at,
                     })),
             };
         });

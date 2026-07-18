@@ -414,7 +414,7 @@
             if (exp.variants[i].id === exp.winner_variant_id) winner = exp.variants[i];
           }
           if (winner && winner.payload) {
-            pending.push({ exp: exp, payload: winner.payload, applied: false });
+            pending.push({ exp: exp, variant: winner, payload: winner.payload, applied: false });
             dbg("serving promoted winner for", exp.id.slice(0, 8) + "…");
           }
         }
@@ -423,6 +423,14 @@
 
       if (exp.status !== "running") return;
       var variant = pickVariant(exp);
+      // Killed by the agent's circuit breaker (significantly losing): the
+      // variant keeps its bucket range — reweighting would silently reshuffle
+      // visitors across every other arm — but its visitors get the control
+      // experience (no change applied) and stop being tracked entirely.
+      if (variant.killed) {
+        dbg("experiment", exp.id.slice(0, 8) + "…", "variant killed — serving original, no tracking");
+        return;
+      }
       dbg(
         "experiment",
         exp.id.slice(0, 8) + "…",
@@ -437,7 +445,7 @@
       // paused meanwhile, the server rejects the events — data stays clean.)
       if (pathMatches(exp.page_path)) {
         if (variant.payload) {
-          pending.push({ exp: exp, payload: variant.payload, applied: false });
+          pending.push({ exp: exp, variant: variant, payload: variant.payload, applied: false });
         }
         sendEvent(exp.id, variant.id, "exposure");
 
@@ -477,6 +485,22 @@
     // client-rendered apps (React/Vite) these elements may not exist yet —
     // a CSS rule covers them from the instant the framework creates them.
     setHide(hideCssFor(pending), "elements");
+
+    // Selector-miss reporting: a change still unapplied 8s in means the
+    // target element is probably gone (a redeploy restructured the page) and
+    // this visitor is seeing the original while counted as a variant
+    // exposure. Report it so the agent can pause the experiment instead of
+    // letting it collect garbage. 8s is far beyond slow-device hydration but
+    // before the 30s hard stop; the server dedupes per visitor, and the agent
+    // requires several distinct visitors before pausing anything.
+    setTimeout(function () {
+      pending.forEach(function (item) {
+        if (!item.applied && item.exp.status === "running") {
+          dbg("selector miss:", item.exp.selector);
+          sendEvent(item.exp.id, item.variant.id, "selector_miss");
+        }
+      });
+    }, 8000);
 
     // Returns true when every pending change has been applied at least once.
     function applyAll() {

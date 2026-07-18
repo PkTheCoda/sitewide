@@ -221,8 +221,22 @@ export type DailySeries = {
 // context); detail.experiment_id points at the new draft it created.
 export type AgentAction = {
     id: number;
-    experiment_id: string;
-    action: "evaluated" | "promoted_winner" | "kept_control" | "proposed_experiment" | "error";
+    // null for run_started/run_finished heartbeat rows, which describe a whole
+    // cron run rather than one experiment (they never appear in per-experiment
+    // queries, only in health checks).
+    experiment_id: string | null;
+    action:
+        | "evaluated"
+        | "promoted_winner"
+        | "kept_control"
+        | "killed_variant" // circuit breaker: one losing variant stopped
+        | "paused_broken" // selector misses — data untrustworthy, founder must fix
+        | "proposed_experiment"
+        | "proposal_skipped"
+        | "proposal_failed"
+        | "run_started"
+        | "run_finished"
+        | "error";
     detail: Record<string, unknown> | null;
     created_at: string;
 };
