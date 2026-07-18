@@ -28,26 +28,44 @@ The agent's work is invisible unless the founder opens the dashboard. The digest
 - [ ] Weekly email per user: each running experiment's variants + rates + lift + agent's current read; decisions made this week (promoted / killed / paused); the proposed next experiment with one-click Activate link.
 - [ ] Powered by `agent_actions` + live stats — mostly a rendering job. Cron on the same daily runner (send on Mondays) or separate route.
 
-## Phase 3 — Onboarding
+## Path to pilots (decided 2026-07-18) — founder owns design, Claude owns functionality
 
-- [ ] Post-signup flow: how they found us, their website URL → kick off a live analysis while they watch (reuse existing analyze pipeline) → land them on the report with findings + first experiment one click away. Goal: first experiment activated in the first session.
+Beta MVP = invite-only: founder controls who joins and onboards; launch timing is free.
 
-## Phase 4 — More experiment & goal types
+### Functionality track (Claude), in order
 
-Already supported: change types text / style / hide / image on one element; goals: element click, pageview of a path (so "did they reach page X" already works).
+1. **Email via Resend** — the remaining 100%-needed feature.
+   - Weekly Monday digest per founder: running experiments w/ per-variant numbers + the agent's read, decisions made that week, pending proposal w/ Activate deep-link.
+   - Event-driven emails the moment they happen (rare by construction): winner promoted, all variants killed, experiment paused (broken selector). No second scheduled email — quiet weeks stay quiet.
+   - Agent-error alert to the founder (heartbeat exists; now someone gets told).
+   - Piggybacks on the daily evaluate cron (Mondays → digest) — preserves the spare Hobby cron slot. Sends logged to agent_actions (`digest_sent`/`email_failed`).
+   - Founder manual steps: create Resend account, verify sending domain (2 DNS records), put `RESEND_API_KEY` in Vercel + .env.
+2. **Beta access gate** — signup gated by invite code / email allowlist so the founder controls who gets in. Required by the MVP definition; doesn't exist yet.
+3. **Onboarding plumbing** — post-signup funnel state + routing: how-found-us Q → website URL → live analysis runs while they watch (existing pipeline) → land on report with first experiment one click away. Goal: first experiment activated in session one. Founder designs the screens; Claude wires them.
+4. **Data-integrity guards before real traffic:**
+   - [ ] Wipe talem.org test events (one-time script in scripts/).
+   - [ ] Domain check on snippet config (any domain with a site id currently runs experiments, incl. Vercel previews).
+   - [ ] Rate limiting on `/api/snippet/event`.
+   - [ ] Password reset / auth completeness check on the signin flow.
+5. **Proposal context upgrade** (the pragmatic "experiment memory"): include the site's full completed-experiment history (name, hypothesis, outcome, lift) in the propose prompt so Claude stops re-learning per report. A real cross-page memory/learning system is post-pilot.
 
-Easy, high-value adds, in order:
-- [ ] **Form-submit goal** (submit listener; SaaS signups are forms).
-- [ ] **Multi-element variants** — one variant changes several elements (headline + CTA together).
-- [ ] **Funnel-step goals (experiment-scoped)** — ordered path list (`/pricing → /signup → /welcome`), snippet logs which step each exposed visitor reaches, report shows drop-off per variant. NOTE: this stays *experiment-scoped*. Full-site funnel analytics is deliberately out of scope — competitors meter every event sitewide, which is exactly the cost structure our wedge attacks. Copy the mechanic, not the surface area.
-- [ ] **Split-URL / redirect test** — variant payload is a URL; snippet redirects. Classic feature, trivially cheap to add.
+### Design track (founder)
 
-## Phase 5 — Pre-pilot cleanup
+- Landing page hero (simple), signin page, onboarding screens, experiment editor UI, dashboard + analyses polish, create-experiment entry points (builder from scratch, from an analysis finding, etc.).
 
-- [ ] Wipe test events from talem.org experiments before real traffic.
-- [ ] Domain check on `/api/snippet/config` (currently any domain with the site id runs experiments, incl. Vercel previews).
-- [ ] Event rate limiting on `/api/snippet/event`.
-- [ ] UI redesign pass (founder-led).
+### Fast-follow (post-first-pilots, not blocking)
+
+- Form-submit goal (submit listener; SaaS signups are forms).
+- Funnel-step goals — experiment-scoped ordered path list w/ per-variant drop-off. NEVER full-site funnel analytics (that's the competitors' cost structure, not ours).
+- Multi-element variants (headline + CTA together), split-URL/redirect tests.
+- Selector self-healing (agent detects+pauses today; auto re-crawl/re-match later).
+
+### Explicitly NOT building now
+
+- **Feature flags** — GrowthBook's turf; dilutes the A/B-first wedge (anti-scope-creep rule).
+- **Stripe billing** — beta is invite-only and free.
+- **Full agent memory system** — item 5 above captures 80% of the value in a prompt change.
+- Heatmaps / general analytics (standing rule).
 
 ## Standing constraints
 
