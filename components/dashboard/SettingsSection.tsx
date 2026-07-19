@@ -4,7 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/services/context/authContext";
 import { signOut, updateDisplayName, updateEmail, updatePassword } from "@/services/auth";
-import { LuLoaderCircle, LuLogOut } from "react-icons/lu";
+import { supabase } from "@/lib/supabaseClient";
+import { LuLoaderCircle, LuLogOut, LuTriangleAlert } from "react-icons/lu";
 
 type Status = { type: "success" | "error"; message: string } | null;
 
@@ -30,6 +31,9 @@ export default function SettingsSection() {
     const [savingProfile, setSavingProfile] = useState(false);
     const [savingPassword, setSavingPassword] = useState(false);
     const [signingOut, setSigningOut] = useState(false);
+    const [deleteArmed, setDeleteArmed] = useState(false);
+    const [deleting, setDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
 
     async function handleSaveProfile() {
         if (savingProfile) return;
@@ -113,6 +117,39 @@ export default function SettingsSection() {
     async function handleSignOut() {
         if (signingOut) return;
         setSigningOut(true);
+        await signOut();
+        router.replace("/signin");
+    }
+
+    async function handleDeleteAccount() {
+        if (deleting) return;
+        // Two-step confirm: first click arms the button, second click deletes.
+        if (!deleteArmed) {
+            setDeleteArmed(true);
+            return;
+        }
+        setDeleting(true);
+        setDeleteError(null);
+
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        if (!token) {
+            setDeleting(false);
+            setDeleteError("Session expired — sign in again first.");
+            return;
+        }
+
+        const res = await fetch("/api/account/delete", {
+            method: "POST",
+            headers: { authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            setDeleting(false);
+            setDeleteError(body.error ?? "Deletion failed — please try again.");
+            return;
+        }
+
         await signOut();
         router.replace("/signin");
     }
@@ -230,6 +267,42 @@ export default function SettingsSection() {
                     )}
                     {signingOut ? "Signing out…" : "Log out"}
                 </button>
+            </div>
+
+            {/* Danger zone */}
+            <div className="flex flex-col gap-3 bg-red-50/50 border border-red-200 rounded-xl p-6 shadow-xs">
+                <p className="text-[11px] font-medium tracking-wider text-red-400 uppercase">
+                    Danger zone
+                </p>
+                <div className="flex items-center justify-between gap-4">
+                    <div>
+                        <p className="text-sm font-medium text-stone-800">Delete account</p>
+                        <p className="text-xs text-stone-500 leading-relaxed max-w-sm">
+                            Permanently deletes your account and everything in it — analyses,
+                            screenshots, experiments, and all collected visitor data. Running
+                            experiments stop serving immediately. This cannot be undone.
+                        </p>
+                    </div>
+                    <button
+                        onClick={handleDeleteAccount}
+                        onBlur={() => setDeleteArmed(false)}
+                        disabled={deleting}
+                        className={`flex items-center gap-2 text-sm font-medium rounded-xl px-5 py-2.5 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shrink-0 cursor-pointer ${
+                            deleteArmed
+                                ? "text-white bg-red-600 hover:bg-red-700"
+                                : "text-red-600 bg-white border border-red-200 hover:bg-red-50"
+                        }`}
+                    >
+                        {deleting && <LuLoaderCircle className="size-4 animate-spin" />}
+                        {!deleting && deleteArmed && <LuTriangleAlert className="size-4" />}
+                        {deleting
+                            ? "Deleting…"
+                            : deleteArmed
+                              ? "Click again to permanently delete"
+                              : "Delete account"}
+                    </button>
+                </div>
+                {deleteError && <p className="text-xs text-red-600">{deleteError}</p>}
             </div>
         </div>
     );
