@@ -241,9 +241,10 @@ export default function OverviewSection({ displayName }: Props) {
 
     return (
         <div className="flex flex-col gap-3">
+            
             <div className="flex flex-col gap-y-2">
-                <h1 className="three-title tracking-tight">
-                    What now, <span className="font-medium text-orange-600">@{displayName}?</span>
+                <h1 className="three-title font-medium tracking-tight">
+                    Let's Get Started, <span className="font-medium text-orange-600">{displayName}</span>
                 </h1>
                 <p className="text-stone-500">
                     Analyze a page, spin up an experiment, or check on your running tests.

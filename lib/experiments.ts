@@ -6,6 +6,7 @@ import {
     Experiment,
     GoalType,
     PageElement,
+    Site,
     VariantPayload,
 } from "@/lib/types";
 
@@ -371,6 +372,37 @@ export async function getWeeklyEventCounts(user_id: string) {
         return { error: message };
     }
     return { exposures: exposures.count ?? 0, conversions: conversions.count ?? 0 };
+}
+
+// find-or-create the sites row for a URL's domain. Used by onboarding (so the
+// install-snippet step has a site id before any experiment exists) — the same
+// find-or-create activateExperiment does later, so no duplicate rows.
+export async function ensureSite(user_id: string, page_url: string) {
+    let domain: string;
+    try {
+        domain = new URL(/^https?:\/\//i.test(page_url) ? page_url : `https://${page_url}`).hostname;
+    } catch {
+        return { error: `Invalid URL: ${page_url}` };
+    }
+
+    const { data: existing } = await supabase
+        .from("sites")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("domain", domain)
+        .maybeSingle();
+    if (existing) return existing as Site;
+
+    const { data: created, error } = await supabase
+        .from("sites")
+        .insert({ user_id, domain })
+        .select("*")
+        .single();
+    if (error) {
+        console.error(error);
+        return { error: error.message };
+    }
+    return created as Site;
 }
 
 // the user's sites — powers the snippet-health chip (snippet_last_seen_at is

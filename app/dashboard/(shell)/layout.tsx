@@ -67,7 +67,7 @@ export default function DashboardShellLayout({
     .toUpperCase()
 
   return (
-    <ProtectedRoute>
+    <ProtectedRoute requireOnboarded>
       <div className="w-full bg-stone-100 h-screen flex flex-col p-3">
         <div className="w-full h-full flex gap-3">
           <aside className={`h-full w-full flex flex-col gap-3 ${sidebarClosed ? "max-w-16" : "max-w-60"}`}>
