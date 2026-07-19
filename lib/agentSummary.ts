@@ -27,6 +27,9 @@ export function agentActionSummary(action: AgentAction): string {
         return `No follow-up test drafted — ${d.reason ?? "nothing worth proposing"}`;
     if (action.action === "proposal_failed")
         return `Couldn't draft a follow-up test (${d.message ?? "unknown error"}) — the evaluation itself was unaffected`;
+    if (action.action === "email_sent") return `Emailed you: "${d.subject ?? "notification"}"`;
+    if (action.action === "email_failed")
+        return `Couldn't send the email "${d.subject ?? "notification"}" (${d.reason ?? "unknown"})`;
     if (action.action === "error") return `Error during evaluation: ${d.message ?? "unknown"}`;
     if (d.reason === "insufficient_sample")
         return `Waiting for more data — every variant needs ${d.min_sample_size ?? "?"} visitors before the agent will decide`;

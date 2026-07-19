@@ -191,6 +191,12 @@ async function assertAll({ A, B, C }, evalBody) {
   const aKept = aActs.find((x) => x.action === "kept_control");
   check("A kept_control logged with harm_gate", aKept?.detail?.reason === "harm_gate");
   check("A proposal_skipped logged (no report)", aActs.some((x) => x.action === "proposal_skipped"));
+  const aEmail = aActs.find((x) => x.action === "email_failed" || x.action === "email_sent");
+  check(
+    "A decision email attempted + logged",
+    String(aEmail?.detail?.subject ?? "").includes("Test ended"),
+    JSON.stringify(aEmail?.detail)
+  );
 
   // B: bad variant killed, experiment still running
   const b = await get1(`experiments?id=eq.${B.exp.id}&select=status`);
@@ -201,6 +207,12 @@ async function assertAll({ A, B, C }, evalBody) {
   check("B fine variant untouched", !bOk.killed_at);
   const bActs = await db("GET", `agent_actions?experiment_id=eq.${B.exp.id}&select=action,detail`);
   check("B killed_variant logged", bActs.some((x) => x.action === "killed_variant"));
+  const bEmail = bActs.find((x) => x.action === "email_failed" || x.action === "email_sent");
+  check(
+    "B kill email names the right decision",
+    String(bEmail?.detail?.subject ?? "").includes("Losing variant stopped"),
+    JSON.stringify(bEmail?.detail)
+  );
 
   // C: paused for selector misses
   const c = await get1(`experiments?id=eq.${C.exp.id}&select=status`);
@@ -234,6 +246,22 @@ async function assertAll({ A, B, C }, evalBody) {
   const killedInCfg = bCfg?.variants?.find((v) => v.id === B.variants[1].id);
   check("config marks killed variant", killedInCfg?.killed === true, JSON.stringify(killedInCfg));
   check("config keeps killed variant's weight", killedInCfg?.weight === 33);
+
+  // digest: builds per-founder; sends, or cleanly reports the missing key
+  const dig = await fetch(`${LOCAL}/api/agent/digest`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${AGENT_SECRET}`, "content-type": "application/json" },
+    body: JSON.stringify({ force: true }),
+  });
+  const digBody = await dig.json();
+  check("digest route 200", dig.status === 200, `got ${dig.status}`);
+  check("digest built for at least the founder", (digBody.outcomes ?? []).length >= 1, JSON.stringify(digBody));
+  const noKey = !env.RESEND_API_KEY;
+  check(
+    noKey ? "digest outcomes report missing key" : "digest outcomes sent",
+    (digBody.outcomes ?? []).every((o) => (noKey ? o.sent === false : o.sent === true)),
+    JSON.stringify(digBody.outcomes)
+  );
 }
 
 async function cleanup() {

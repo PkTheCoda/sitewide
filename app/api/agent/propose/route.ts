@@ -1,6 +1,8 @@
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { proposeNextExperiment } from "@/lib/propose";
 
+export const maxDuration = 60; // Claude call can exceed the 10s default
+
 // Manual trigger for the proposal pipeline — the step that normally only runs
 // when the evaluator completes an experiment. Two uses:
 //

@@ -1,6 +1,11 @@
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { compareVariants, VariantStats } from "@/lib/stats";
 import { proposeNextExperiment } from "@/lib/propose";
+import { sendDecisionEmail, sendWeeklyDigests } from "@/lib/agentEmails";
+
+// Evaluations + a possible Claude call + Monday digests can pass the default
+// 10s function budget.
+export const maxDuration = 60;
 
 // ─── The autonomous evaluation loop ─────────────────────────────────────────
 //
@@ -70,7 +75,7 @@ async function runEvaluation(request: Request) {
 
     const { data: experiments, error } = await supabase
         .from("experiments")
-        .select("id, name, status, min_sample_size, auto_promote, winner_variant_id")
+        .select("id, name, status, user_id, min_sample_size, auto_promote, winner_variant_id")
         .eq("status", "running");
 
     if (error) {
@@ -88,7 +93,9 @@ async function runEvaluation(request: Request) {
 
     for (const experiment of experiments ?? []) {
         try {
-            results.push(await evaluateExperiment(supabase, experiment));
+            const result = await evaluateExperiment(supabase, experiment);
+            results.push(result);
+            await emailDecision(supabase, experiment, result);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             await log(supabase, experiment.id, "error", { message });
@@ -96,22 +103,50 @@ async function runEvaluation(request: Request) {
         }
     }
 
+    // Mondays: the weekly digest rides the same cron run (Hobby allows only
+    // two cron jobs — the spare slot stays spare). Guarded to once per day.
+    let digest = null;
+    if (new Date().getUTCDay() === 1) {
+        digest = await sendWeeklyDigests(supabase);
+    }
+
     await log(supabase, null, "run_finished", {
         evaluated: results.length,
         decisions: results.map((r) => ({ experiment_id: r.experiment_id, decision: r.decision })),
         errors: results.filter((r) => r.decision === "error").length,
         duration_ms: Date.now() - startedAt,
+        ...(digest ? { digest } : {}),
     });
 
-    return Response.json({ evaluated: results.length, results });
+    return Response.json({ evaluated: results.length, results, digest });
 }
 
 type ExperimentRow = {
     id: string;
     name: string;
+    user_id: string;
     min_sample_size: number;
     auto_promote: boolean;
 };
+
+// A decisive outcome deserves an email NOW, not next Monday. Quiet outcomes
+// (continue / insufficient sample) send nothing. Kills that happen alongside
+// a "continue" decision are surfaced as killed_variant.
+async function emailDecision(
+    supabase: ReturnType<typeof getSupabaseAdmin>,
+    experiment: ExperimentRow,
+    result: { decision: string } & Record<string, unknown>
+) {
+    const decisive = ["promoted_winner", "kept_control", "paused_broken", "killed_variant"];
+    if (!decisive.includes(result.decision)) return;
+    // killed_variant piggybacks on a "continue" evaluation — the kill's own
+    // detail (names, rates, p) lives in the kills array, not at top level.
+    const detail =
+        result.decision === "killed_variant"
+            ? ((result.kills as Record<string, unknown>[] | undefined)?.[0] ?? result)
+            : result;
+    await sendDecisionEmail(supabase, experiment, result.decision, detail);
+}
 
 async function evaluateExperiment(
     supabase: ReturnType<typeof getSupabaseAdmin>,

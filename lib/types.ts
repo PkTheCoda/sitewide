@@ -234,6 +234,9 @@ export type AgentAction = {
         | "proposed_experiment"
         | "proposal_skipped"
         | "proposal_failed"
+        | "email_sent"
+        | "email_failed"
+        | "digest_sent" // experiment_id null — one row per founder digest
         | "run_started"
         | "run_finished"
         | "error";

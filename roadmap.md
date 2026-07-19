@@ -53,6 +53,21 @@ Beta MVP = invite-only: founder controls who joins and onboards; launch timing i
 
 - Landing page hero (simple), signin page, onboarding screens, experiment editor UI, dashboard + analyses polish, create-experiment entry points (builder from scratch, from an analysis finding, etc.).
 
+### Code experiments — client-side flag API (decided 2026-07-18: YES, after email + beta gate)
+
+`window.sitewide.variant('experiment-key')` + `sitewide.track('goal')` — the developer writes the
+conditional, the snippet does bucketing/exposure/winner-serving exactly as today; a code experiment
+is just an experiment with named variants and no DOM payload, so stats, circuit breaker, and winner
+promotion all work unchanged (promoting a winner = config serves it 100%, dev's if-statement keeps
+working, no deploy). Rationale: moat is the agent, not the editor — this kills the "visual builder
+can't express my test" objection for the React-heavy SaaS ICP, cheaply.
+- Honest size: ~1 day (ready-queue semantics for first-visit config timing, builder support for
+  payload-less experiments, custom-goal event validation, a docs snippet, tests) — not "a few hours."
+- Guardrails: it's an escape hatch, not a pillar. The agent can't author code variants, so proposals
+  stay DOM-based. And NEVER server-side SDKs (Node middleware/React hooks/multi-language packages —
+  LaunchDarkly's business, GrowthBook gives it away; a solo founder loses there).
+- Pull forward immediately if a real prospect asks for it.
+
 ### Fast-follow (post-first-pilots, not blocking)
 
 - Form-submit goal (submit listener; SaaS signups are forms).
