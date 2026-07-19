@@ -244,6 +244,12 @@ export type AgentAction = {
     created_at: string;
 };
 
+// An agent_actions row joined with its experiment's name — the shape the
+// dashboard's cross-experiment activity feed renders.
+export type AgentFeedItem = AgentAction & {
+    experiments: { id: string; name: string };
+};
+
 // One version inside an experiment. Control is a row too (is_control: true,
 // payload: null = "change nothing"). weight = % of visitors bucketed into it.
 // position preserves order (0 = control, 1 = Variant B, …).
@@ -255,6 +261,9 @@ export type ExperimentVariant = {
     payload: VariantPayload;
     weight: number;
     position: number;
+    // set by the agent's circuit breaker: the variant keeps its traffic share
+    // but serves the control experience and is excluded from stats
+    killed_at: string | null;
     created_at: string;
 };
 

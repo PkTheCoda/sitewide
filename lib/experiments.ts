@@ -328,6 +328,67 @@ export async function getExperimentDailySeries(experiment_id: string): Promise<D
     return { days: series(""), byVariant };
 }
 
+// Cross-experiment agent activity for the dashboard home, newest first.
+// Joins the experiment name in (one FK links agent_actions → experiments, so
+// no disambiguation hint needed). Email bookkeeping rows are noise here — the
+// feed is "what did the agent decide", not "what did it mail".
+// Paginated: pass the previous page's length as offset to load more.
+export async function getAgentFeed(user_id: string, limit = 6, offset = 0) {
+    const { data, error } = await supabase
+        .from("agent_actions")
+        .select("*, experiments!inner(id, name, user_id)")
+        .eq("experiments.user_id", user_id)
+        .not("action", "in", "(email_sent,email_failed)")
+        .order("created_at", { ascending: false })
+        .range(offset, offset + limit - 1);
+
+    if (error) {
+        console.error(error);
+        return { error: error.message };
+    }
+    return data;
+}
+
+// 7-day unique visitor / conversion counts across ALL the user's experiments —
+// the dashboard stat tiles. Two head-only count queries; no rows transferred.
+export async function getWeeklyEventCounts(user_id: string) {
+    const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+    const countSince = (event_type: string) =>
+        supabase
+            .from("experiment_events")
+            .select("id, experiments!inner(user_id)", { count: "exact", head: true })
+            .eq("experiments.user_id", user_id)
+            .eq("event_type", event_type)
+            .gte("created_at", since);
+
+    const [exposures, conversions] = await Promise.all([
+        countSince("exposure"),
+        countSince("conversion"),
+    ]);
+    if (exposures.error || conversions.error) {
+        const message = (exposures.error ?? conversions.error)!.message;
+        console.error(message);
+        return { error: message };
+    }
+    return { exposures: exposures.count ?? 0, conversions: conversions.count ?? 0 };
+}
+
+// the user's sites — powers the snippet-health chip (snippet_last_seen_at is
+// bumped by every config fetch, so "recently seen" ≈ "installed and alive")
+export async function getSites(user_id: string) {
+    const { data, error } = await supabase
+        .from("sites")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("created_at", { ascending: true });
+
+    if (error) {
+        console.error(error);
+        return { error: error.message };
+    }
+    return data;
+}
+
 // agent decision log for an experiment, newest first
 export async function getAgentActions(experiment_id: string) {
     const { data, error } = await supabase
