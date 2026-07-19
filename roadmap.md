@@ -34,7 +34,7 @@ Beta MVP = invite-only: founder controls who joins and onboards; launch timing i
 
 ### Functionality track (Claude), in order
 
-1. **Email via Resend** — the remaining 100%-needed feature.
+1. **Email via Resend** — SHIPPED 2026-07-18, dormant until founder adds `RESEND_API_KEY` (+ verifies a sending domain, sets `EMAIL_FROM`). Until then every attempted send logs `email_failed`/`digest_sent {sent:false, reason}` — visible, not silent.
    - Weekly Monday digest per founder: running experiments w/ per-variant numbers + the agent's read, decisions made that week, pending proposal w/ Activate deep-link.
    - Event-driven emails the moment they happen (rare by construction): winner promoted, all variants killed, experiment paused (broken selector). No second scheduled email — quiet weeks stay quiet.
    - Agent-error alert to the founder (heartbeat exists; now someone gets told).
