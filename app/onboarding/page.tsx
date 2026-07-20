@@ -443,7 +443,7 @@ export default function OnboardingPage() {
                                 </div> */}
                                 <div className="flex flex-col gap-3 items-center">
                                     <h1 className="four-title font-medium tracking-tight text-stone-900">
-                                        Your agent is reading{" "}
+                                        Your agent is reading{" "} <br />
                                         <span className="text-orange-600 five-title tracking-tight">
                                             {siteUrl.replace(/^https?:\/\//, "")}
                                         </span>
@@ -600,7 +600,7 @@ export default function OnboardingPage() {
                             </div>
                         )}
 
-                        <Footer onContinue={() => setStep("snippet")} continueLabel="One last step (Not a paywall, promise)" />
+                        <Footer onContinue={() => setStep("snippet")} continueLabel="One last step" />
                     </>
                 )}
 

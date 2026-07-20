@@ -17,6 +17,7 @@ import {
 } from "@/lib/experiments";
 import { buildPreviewLink } from "@/lib/preview";
 import { agentActionSummary } from "@/lib/agentSummary";
+import { twoProportionZTest } from "@/lib/stats";
 import {
     AgentAction,
     DailyStat,
@@ -225,6 +226,192 @@ function payloadText(payload: VariantPayload): string {
 }
 
 type Counts = Record<string, { exposures: number; conversions: number }>;
+type Count = { exposures: number; conversions: number };
+
+// The agent won't even run its z-test until every variant clears this many
+// unique visitors (mirrors SAMPLE_FLOOR in app/api/agent/evaluate/route.ts).
+// We use the SAME gate here so the UI's verdict never contradicts the
+// agent's timeline rows below.
+const SAMPLE_FLOOR = 100;
+
+type Verdict = {
+    phase: "collecting" | "inconclusive" | "significant";
+    slowest: number; // fewest unique visitors on any variant — the real gate
+    minSample: number;
+    leaderName: string;
+    leaderId: string;
+    lift: number; // relative %, leader vs control
+    confidence: number; // (1 - p) * 100
+    winnerIsControl: boolean; // significant, but the original is ahead
+};
+
+// Turn the raw counts into a single honest verdict about the whole test,
+// using the control vs. its best-performing challenger. Returns null when
+// there's nothing to compare yet (no control, or no live challenger).
+function readVerdict(
+    variants: ExperimentVariant[],
+    counts: Counts,
+    minSampleSize: number
+): Verdict | null {
+    const control = variants.find((v) => v.is_control);
+    const challengers = variants.filter((v) => !v.is_control && !v.killed_at);
+    if (!control || challengers.length === 0) return null;
+
+    const rateOf = (id: string) => {
+        const c = counts[id] ?? { exposures: 0, conversions: 0 };
+        return c.exposures > 0 ? c.conversions / c.exposures : 0;
+    };
+    const expOf = (id: string) => counts[id]?.exposures ?? 0;
+
+    const minSample = Math.max(SAMPLE_FLOOR, minSampleSize || 0);
+    const slowest = Math.min(expOf(control.id), ...challengers.map((v) => expOf(v.id)));
+
+    const leader = challengers.reduce((best, v) => (rateOf(v.id) > rateOf(best.id) ? v : best));
+    const cCtl = counts[control.id] ?? { exposures: 0, conversions: 0 };
+    const cLead = counts[leader.id] ?? { exposures: 0, conversions: 0 };
+    const test = twoProportionZTest(
+        cCtl.conversions,
+        cCtl.exposures,
+        cLead.conversions,
+        cLead.exposures
+    );
+    const pValue = test?.p ?? 1;
+    const controlRate = rateOf(control.id);
+    const lift = controlRate > 0 ? ((rateOf(leader.id) - controlRate) / controlRate) * 100 : 0;
+
+    let phase: Verdict["phase"];
+    if (slowest < minSample) phase = "collecting";
+    else if (pValue < 0.05) phase = "significant";
+    else phase = "inconclusive";
+
+    return {
+        phase,
+        slowest,
+        minSample,
+        leaderName: leader.name,
+        leaderId: leader.id,
+        lift,
+        confidence: (1 - pValue) * 100,
+        winnerIsControl: phase === "significant" && lift <= 0,
+    };
+}
+
+// The one-line verdict strip above the variant cards. Its whole job is to stop
+// a founder reading a 6-point gap on 80 visitors as "Variant B wins."
+function SignificanceBanner({ verdict }: { verdict: Verdict }) {
+    if (verdict.phase === "collecting") {
+        const progress = Math.min(1, verdict.slowest / verdict.minSample);
+        return (
+            <div className="flex flex-col gap-2 rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-stone-700 flex items-center gap-2">
+                        <LuHourglass className="size-4 text-amber-500" strokeWidth={2} />
+                        Too early to compare — still gathering data
+                    </p>
+                    <span className="text-[11px] text-stone-500 font-robot tabular-nums">
+                        {verdict.slowest.toLocaleString()} / {verdict.minSample.toLocaleString()} visitors
+                    </span>
+                </div>
+                <div className="h-1.5 bg-stone-200 rounded-full overflow-hidden">
+                    <div
+                        className="h-full rounded-full bg-amber-400"
+                        style={{ width: `${Math.max(3, progress * 100)}%` }}
+                    />
+                </div>
+                <p className="text-xs text-stone-500 leading-relaxed">
+                    Conversion rates this early swing on a handful of visitors. Your agent won&apos;t
+                    call a winner until every variant clears {verdict.minSample.toLocaleString()} visitors.
+                </p>
+            </div>
+        );
+    }
+
+    if (verdict.phase === "significant" && !verdict.winnerIsControl) {
+        return (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <p className="text-sm font-medium text-emerald-800 flex items-center gap-2">
+                    <LuTrophy className="size-4 text-emerald-600" strokeWidth={2} />
+                    {verdict.leaderName} is a statistically significant winner
+                    <span className="font-normal text-emerald-700">
+                        ({verdict.lift > 0 ? "+" : ""}
+                        {verdict.lift.toFixed(1)}% lift)
+                    </span>
+                </p>
+                <span className="text-[11px] font-medium text-emerald-700 bg-emerald-100 rounded-full px-2.5 py-1 tabular-nums">
+                    {verdict.confidence.toFixed(0)}% confidence
+                </span>
+            </div>
+        );
+    }
+
+    if (verdict.phase === "significant" && verdict.winnerIsControl) {
+        return (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3">
+                <p className="text-sm font-medium text-sky-800 flex items-center gap-2">
+                    <LuShield className="size-4 text-sky-600" strokeWidth={2} />
+                    The original is holding up — no variant has significantly beaten it
+                </p>
+                <span className="text-[11px] font-medium text-sky-700 bg-sky-100 rounded-full px-2.5 py-1 tabular-nums">
+                    {verdict.confidence.toFixed(0)}% confidence
+                </span>
+            </div>
+        );
+    }
+
+    // inconclusive: enough data, but the gap isn't distinguishable from noise
+    return (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3">
+            <p className="text-sm font-medium text-stone-700 flex items-center gap-2">
+                <LuSearch className="size-4 text-stone-400" strokeWidth={2} />
+                No clear winner yet — the difference isn&apos;t statistically significant
+            </p>
+            <span className="text-[11px] font-medium text-stone-500 bg-stone-100 rounded-full px-2.5 py-1 tabular-nums">
+                {verdict.confidence.toFixed(0)}% confidence · need 95%
+            </span>
+        </div>
+    );
+}
+
+// The small confidence chip under a challenger's conversion rate. Muted gray
+// until the lift is real — never a green number the sample can't back.
+function variantSignal(
+    variant: ExperimentVariant,
+    c: Count,
+    controlCounts: Count | null,
+    minSample: number,
+    slowest: number
+): React.ReactNode {
+    if (variant.is_control || !controlCounts) return null;
+    if (c.exposures === 0 || controlCounts.exposures === 0) return null;
+
+    const controlRate = controlCounts.conversions / controlCounts.exposures;
+    const rate = c.conversions / c.exposures;
+    const lift = controlRate > 0 ? ((rate - controlRate) / controlRate) * 100 : 0;
+    const test = twoProportionZTest(
+        controlCounts.conversions,
+        controlCounts.exposures,
+        c.conversions,
+        c.exposures
+    );
+    const p = test?.p ?? 1;
+    const enoughSample = slowest >= minSample;
+    const significant = enoughSample && p < 0.05;
+    const liftText = `${lift > 0 ? "+" : ""}${lift.toFixed(1)}% vs control`;
+
+    if (significant) {
+        const tone = lift > 0 ? "text-emerald-700 bg-emerald-100" : "text-rose-700 bg-rose-100";
+        return (
+            <span className={`inline-block text-[10px] font-medium rounded-full px-2 py-0.5 mt-1 ${tone}`}>
+                {liftText} · significant
+            </span>
+        );
+    }
+    return (
+        <span className="inline-block text-[10px] font-medium text-stone-400 bg-stone-100 rounded-full px-2 py-0.5 mt-1">
+            {liftText} · not yet significant
+        </span>
+    );
+}
 
 
 export default function IndividualExperimentPage() {
@@ -477,6 +664,15 @@ export default function IndividualExperimentPage() {
         /* show raw url */
     }
     const targetLabel = experiment.selector_fallback?.text ?? experiment.original_value;
+
+    // Significance readout, computed from the same z-test + sample gate the
+    // agent uses, so the cards and the agent timeline can never disagree.
+    const minSample = Math.max(SAMPLE_FLOOR, experiment.min_sample_size || 0);
+    const verdict = readVerdict(variants, counts, experiment.min_sample_size);
+    const controlVariant = variants.find((v) => v.is_control) ?? null;
+    const controlCounts = controlVariant
+        ? counts[controlVariant.id] ?? { exposures: 0, conversions: 0 }
+        : null;
 
     const statusTone = STATUS_CONTROL[experiment.status] ?? STATUS_CONTROL.draft;
 
@@ -734,10 +930,10 @@ export default function IndividualExperimentPage() {
             )} */}
 
             {/* ── Variants ───────────────────────────────────────────────── */}
-            <div className="flex flex-col gap-2 px-6 bg-linear-to-t pt-4 from-white to-stone-100 from-60% rounded-xl">
-                {/* <h2 className="one-title font-semibold tracking-tight text-stone-800 truncate">
-                    Variant-By-Variant Analaytics
-                </h2> */}
+            <div className="flex flex-col gap-3 px-6 bg-linear-to-t pt-4 from-white to-stone-100 from-60% rounded-xl">
+                {/* Single honest verdict on the whole test, so two big rates
+                    side-by-side don't get read as a result before they are one. */}
+                {verdict && <SignificanceBanner verdict={verdict} />}
                 <div className="grid grid-cols-2 gap-4">
                     {variants.map((variant) => {
                         const c = counts[variant.id] ?? { exposures: 0, conversions: 0 };
@@ -802,6 +998,8 @@ export default function IndividualExperimentPage() {
                                             <p className="text-[11px] text-stone-400 tabular-nums">
                                                 {c.conversions}/{c.exposures} visitors · {variant.weight}% of traffic
                                             </p>
+                                            {/* muted until the lift clears the z-test + sample gate */}
+                                            {variantSignal(variant, c, controlCounts, minSample, verdict?.slowest ?? 0)}
                                         </div>
                                     </div>
 
@@ -827,27 +1025,6 @@ export default function IndividualExperimentPage() {
                                         />
                                     </div>
                                 </div>
-                                {/* <div className="bg-stone-200 w-max px-2 rounded-b-md transition-opacity absolute top-0 right-0">
-                                    {previewUrl ? (
-                                        <a
-                                            href={previewUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="inline-flex items-center text-xs font-medium tracking-tight text-stone-500"
-                                        >
-                                            Preview Variant
-                                        </a>
-                                    ) : 
-                                    <a
-                                        href={pageLabel}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="inline-flex items-center text-xs font-medium tracking-tight text-stone-500"
-                                    >
-                                        Preview Page
-                                    </a>
-                                    }
-                                </div> */}
                             </div>
                         );
                     })}
