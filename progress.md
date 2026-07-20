@@ -69,6 +69,14 @@
 - [x] Tests: 21 API/DB assertions (synthetic experiments through real routes) + 8 jsdom snippet assertions, all passing
 - [ ] Playwright/Browserless variant preview render
 
+### 2.3 Results UI + data management (in progress)
+- [x] Per-experiment detail page (`/dashboard/experiments/[id]`): variant cards, per-variant + total daily-activity charts, agent activity timeline
+- [x] Honest significance surfacing on the detail page (2026-07-20) — a verdict banner (gathering data / no significant difference / significant winner / original holding up) + a muted per-variant confidence chip (`+X% vs control · not yet significant`, only green once p<0.05 AND the sample gate clears). Reuses `lib/stats.ts` and the same `SAMPLE_FLOOR=100` gate the agent uses, so the UI can never contradict the agent timeline. Kills the "two big rates side-by-side reads as a winner" credibility risk before pilots
+- [x] Full account deletion — `POST /api/account/delete` (own-token auth; clears Storage screenshots → comments → reports by hand, then deletes the auth user which cascades experiments+sites); Settings danger-zone two-step delete button
+- [x] Delete a single experiment — `deleteExperiment` (client, RLS-scoped; cascades variants/events/agent_actions/daily-views) + two-step delete button on each Experiments card
+- [x] Delete a single analysis — `POST /api/report/delete` (own-token auth, verifies report ownership; clears screenshots → comments → report; experiments keep `report_id → null` by design) + two-step delete button on each Analyses card
+- [ ] Playwright/Browserless variant preview render
+
 ---
 
 ## Phase 3 — Polish + Launch
@@ -103,3 +111,5 @@
 | 2026-06-28 | reports.id is integer (not UUID) | Created table with Supabase default; migrate to UUID before launch |
 | 2026-06-06 | Store pin coords as percentages | Pins stay accurate at any display size |
 | 2026-07-11 | Analysis prompt overhaul: Haiku → Sonnet 5 (ANALYZE_MODEL env override), 8-10 comment quota → 3-8 quality-gated, structured outputs (json_schema) replacing JSON prompt hacks, gold/anti few-shot examples | Analysis is the founder's first impression; quota was forcing weak findings; structured outputs delete a whole class of parse failures |
+| 2026-07-20 | Surface significance as a verdict banner + muted per-variant chip, never a bare green lift, gated on the agent's own z-test + `SAMPLE_FLOOR` | Two raw conversion rates side-by-side at ~50–80 visitors read as a result the sample can't back — single biggest pre-pilot credibility risk. Sharing the agent's math keeps UI and timeline consistent |
+| 2026-07-20 | Single-report delete goes through a service-role API route (like account delete), not client SQL | Reports don't cascade comments and Storage screenshots aren't touched by SQL; the admin route is the only place that can clean all three. Experiments intentionally survive with `report_id → null` |

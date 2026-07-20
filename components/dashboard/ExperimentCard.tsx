@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
     activateExperiment,
+    deleteExperiment,
     dismissExperiment,
     getAgentActions,
     getExperimentEvents,
@@ -58,6 +59,7 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
     const [showSnippet, setShowSnippet] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [deleteArmed, setDeleteArmed] = useState(false);
 
     let pagePath = experiment.page_url;
     try {
@@ -132,6 +134,27 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
         setBusy(false);
         if ("error" in result && result.error) setError(result.error);
         else onChanged();
+    }
+
+    // Permanent delete: cascades every variant/event/action/daily-view row.
+    // Two-step confirm — first click arms, second click deletes — since it
+    // can't be undone (dismiss archives; this removes the row entirely).
+    async function handleDelete() {
+        if (busy) return;
+        if (!deleteArmed) {
+            setDeleteArmed(true);
+            return;
+        }
+        setBusy(true);
+        setError(null);
+        const result = await deleteExperiment(experiment.id);
+        if ("error" in result && result.error) {
+            setBusy(false);
+            setDeleteArmed(false);
+            setError(result.error);
+        } else {
+            onChanged(); // row is gone — parent refetch drops this card
+        }
     }
 
     return (
@@ -323,6 +346,25 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
                                 Finished — the winner is being served to all visitors.
                             </p>
                         )}
+
+                        {/* Permanent delete, right-aligned away from the primary
+                            lifecycle actions so it's hard to hit by accident. */}
+                        <button
+                            onClick={handleDelete}
+                            onBlur={() => setDeleteArmed(false)}
+                            disabled={busy}
+                            className={`ml-auto text-xs font-medium rounded-lg px-3 py-2 transition-colors disabled:opacity-50 ${
+                                deleteArmed
+                                    ? "text-white bg-red-600 hover:bg-red-700"
+                                    : "text-stone-500 hover:text-red-600 hover:bg-red-50"
+                            }`}
+                        >
+                            {busy && deleteArmed
+                                ? "Deleting…"
+                                : deleteArmed
+                                  ? "Click again to delete permanently"
+                                  : "Delete"}
+                        </button>
                     </div>
                 </div>
             )}

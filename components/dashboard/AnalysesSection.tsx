@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/services/context/authContext";
-import { getReports } from "@/lib/reports";
+import { deleteReport, getReports } from "@/lib/reports";
 import { Report } from "@/lib/types";
 import StatusBadge from "./StatusBadge";
 
@@ -14,6 +14,31 @@ import StatusBadge from "./StatusBadge";
 export default function AnalysesSection() {
     const { user } = useAuth();
     const [reports, setReports] = useState<Report[] | null>(null);
+    // Two-step delete confirm, keyed by report id (only one card can be armed
+    // or mid-delete at a time).
+    const [armedId, setArmedId] = useState<string | null>(null);
+    const [deletingId, setDeletingId] = useState<string | null>(null);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
+
+    async function handleDelete(reportId: string) {
+        if (deletingId !== null) return;
+        if (armedId !== reportId) {
+            setArmedId(reportId);
+            return;
+        }
+        setDeletingId(reportId);
+        setDeleteError(null);
+        const result = await deleteReport(reportId);
+        if ("error" in result && result.error) {
+            setDeleteError(result.error);
+            setDeletingId(null);
+            setArmedId(null);
+            return;
+        }
+        setReports((prev) => prev?.filter((r) => r.id !== reportId) ?? prev);
+        setDeletingId(null);
+        setArmedId(null);
+    }
 
     useEffect(() => {
         if (!user) return;
@@ -102,11 +127,32 @@ export default function AnalysesSection() {
                                         </Link>
                                     )}
                                 </div>
+                                {/* Permanent delete — comments + screenshots
+                                    included. Two-step confirm since it can't be
+                                    undone; blur disarms it. */}
+                                <button
+                                    onClick={() => handleDelete(report.id)}
+                                    onBlur={() => armedId === report.id && setArmedId(null)}
+                                    disabled={deletingId !== null}
+                                    className={`text-xs font-medium rounded-lg py-2 transition-colors disabled:opacity-50 ${
+                                        armedId === report.id
+                                            ? "text-white bg-red-600 hover:bg-red-700"
+                                            : "text-stone-500 hover:text-red-600 hover:bg-red-50"
+                                    }`}
+                                >
+                                    {deletingId === report.id
+                                        ? "Deleting…"
+                                        : armedId === report.id
+                                          ? "Click again to delete permanently"
+                                          : "Delete analysis"}
+                                </button>
                             </div>
                         </div>
                     ))}
                 </div>
             )}
+
+            {deleteError && <p className="text-xs text-red-600">{deleteError}</p>}
         </div>
     );
 }

@@ -44,6 +44,29 @@ export async function getReports(user_id: string) {
     return data;
 }
 
+// permanently delete a report (one analysis) and its comments + screenshots.
+// Runs through /api/report/delete because clearing Storage screenshots needs
+// the service role; the caller's access token proves ownership server-side.
+export async function deleteReport(report_id: number | string) {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return { error: "Session expired — sign in again first." };
+
+    const res = await fetch("/api/report/delete", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ report_id }),
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { error: body.error ?? "Deletion failed — please try again." };
+    }
+    return { ok: true };
+}
+
 // get all comments from a specific report
 export async function getComments(report_id: string) {
     const { data, error } = await supabase.from('comments').select('*').eq('report_id', report_id)

@@ -100,6 +100,14 @@ Known risks: strict CSP `connect-src` blocks the fetch (document it), selector s
 - Two-proportion z-test on unique visitors, but **never naive p-values on live-updating data** (peeking problem → false winners). Evaluate on a fixed schedule against a pre-committed sample size, or go sequential/Bayesian.
 - Enforce minimum sample (~1k exposures/variant floor; detecting +10% lift at 95%: ~5–7k/variant on a 30% baseline, 10–15k/variant on a 2–3% baseline).
 - Product implication: nudge founders toward high-baseline goals (CTA clicks, signup-page-reached) their traffic can actually resolve, and warn when it can't. Each extra variant splits traffic and stretches time-to-significance — recommend 2–3 arms max.
+- **Surfaced honestly in the UI (2026-07-20):** the experiment detail page (`/dashboard/experiments/[id]`) never shows a bare lift. A verdict banner gives one status for the whole test — *gathering data* (progress toward the sample gate), *no significant difference yet*, *significant winner*, or *original holding up* — and each challenger card carries a muted `+X% vs control · not yet significant` chip that only turns green once `p<0.05` **and** every variant clears the sample floor. The client reuses `twoProportionZTest` from `lib/stats.ts` and the same `SAMPLE_FLOOR = 100` the agent evaluator uses, so the dashboard and the agent's own timeline can never disagree about whether a result exists.
+
+## Deletion model (what cascades, what doesn't)
+
+Verified empirically (2026-07-19 throwaway-user probe; see `app/api/account/delete/route.ts`):
+- **Delete an experiment** → variants, events, agent_actions, and daily views all cascade off the `experiments` row. Clean, nothing orphaned. `deleteExperiment` (in `lib/experiments.ts`) is a single client-side delete, RLS-scoped to the owner — used by the two-step delete button on each Experiments card.
+- **Delete a report/analysis** → comments do **not** cascade and Storage screenshots are never touched by SQL. So `POST /api/report/delete` (service role, verifies ownership from the caller's token) clears screenshots (`${report.id}/` bucket prefix) → comments → the report row. Experiments built from it keep running with `report_id → null` (by design). Fronted by `deleteReport` in `lib/reports.ts` and the two-step delete button on each Analyses card.
+- **Delete the auth user** → cascades experiments (+ their children) and sites, but leaves reports/comments/screenshots orphaned — so `POST /api/account/delete` does the same manual screenshots → comments → reports cleanup before `auth.admin.deleteUser`. Fronted by the Settings danger-zone button.
 
 ## Build State & Order
 

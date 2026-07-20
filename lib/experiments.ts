@@ -227,6 +227,24 @@ export async function dismissExperiment(experiment_id: string) {
     return { ok: true };
 }
 
+// permanently delete an experiment and everything under it. The DB cascades
+// variants, events, agent_actions, and daily views off the experiments row
+// (verified empirically — see app/api/account/delete/route.ts), so a single
+// delete leaves nothing orphaned. Unlike dismiss (which archives), this is
+// irreversible and removes the row entirely. RLS scopes it to the owner.
+export async function deleteExperiment(experiment_id: string) {
+    const { error } = await supabase
+        .from("experiments")
+        .delete()
+        .eq("id", experiment_id);
+
+    if (error) {
+        console.error(error);
+        return { error: error.message };
+    }
+    return { ok: true };
+}
+
 // pause a running experiment (snippet stops serving it within the cache TTL)
 export async function pauseExperiment(experiment_id: string) {
     const { error } = await supabase
