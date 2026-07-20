@@ -28,6 +28,7 @@ import SnippetInstructions from "@/components/dashboard/SnippetInstructions";
 import {
     LuCircleAlert,
     LuArrowLeft,
+    LuBan,
     LuCalendarDays,
     LuCheck,
     LuChevronDown,
@@ -36,6 +37,7 @@ import {
     LuGlobe,
     LuHourglass,
     LuLightbulb,
+    LuMail,
     LuMousePointerClick,
     LuPencil,
     LuSearch,
@@ -127,12 +129,85 @@ function agentActionMeta(action: AgentAction): {
             return { title: "Promoted a winner", icon: LuTrophy, tone: "bg-emerald-100 text-emerald-700" };
         case "kept_control":
             return { title: "Kept the original", icon: LuShield, tone: "bg-sky-100 text-sky-700" };
+        case "killed_variant":
+            return { title: "Stopped a losing variant", icon: LuBan, tone: "bg-rose-100 text-rose-700" };
+        case "paused_broken":
+            return { title: "Paused the experiment", icon: LuCircleAlert, tone: "bg-amber-100 text-amber-700" };
         case "proposed_experiment":
             return { title: "Proposed a follow-up", icon: LuSparkles, tone: "bg-violet-100 text-violet-700" };
+        case "proposal_skipped":
+            return { title: "Skipped proposing", icon: LuSparkles, tone: "bg-stone-100 text-stone-600" };
+        case "proposal_failed":
+            return { title: "Proposal failed", icon: LuCircleAlert, tone: "bg-rose-100 text-rose-700" };
+        case "email_sent":
+            return { title: "Emailed you", icon: LuMail, tone: "bg-stone-100 text-stone-600" };
+        case "email_failed":
+            return { title: "Email failed", icon: LuMail, tone: "bg-rose-100 text-rose-700" };
         case "error":
             return { title: "Hit an error", icon: LuCircleAlert, tone: "bg-rose-100 text-rose-700" };
         default:
             return { title: "Checked results", icon: LuSearch, tone: "bg-stone-100 text-stone-600" };
+    }
+}
+
+// One extra per-row rendering: the Outcome cell — a status chip, or (while
+// waiting on data) a progress bar toward the decision threshold. Reads the
+// same detail blob the action was logged with.
+function actionOutcome(action: AgentAction): React.ReactNode {
+    const d = (action.detail ?? {}) as Record<string, unknown>;
+    const stats = Array.isArray(d.stats)
+        ? (d.stats as { exposures?: number; conversions?: number }[])
+        : null;
+
+    if (action.action === "evaluated" && d.reason === "insufficient_sample" && stats) {
+        const minSample = typeof d.min_sample_size === "number" ? d.min_sample_size : 100;
+        const slowest = Math.min(...stats.map((s) => s.exposures ?? 0));
+        const progress = Math.min(1, slowest / minSample);
+        return (
+            <div className="flex items-center gap-2.5 min-w-32">
+                <div className="flex-1 h-1.5 bg-stone-100 rounded-full overflow-hidden">
+                    <div
+                        className="h-full rounded-full bg-orange-500"
+                        style={{ width: `${Math.max(3, progress * 100)}%` }}
+                    />
+                </div>
+                <span className="text-[11px] text-stone-500 font-robot tabular-nums shrink-0">
+                    {slowest}/{minSample}
+                </span>
+            </div>
+        );
+    }
+
+    const chip = (text: string, tone: string) => (
+        <span className={`inline-block text-[11px] font-medium rounded-full px-2.5 py-1 ${tone}`}>
+            {text}
+        </span>
+    );
+    switch (action.action) {
+        case "promoted_winner": {
+            const rate = typeof d.winner_rate === "number" ? ` · ${(d.winner_rate * 100).toFixed(1)}%` : "";
+            return chip(`Winner${rate}`, "bg-emerald-100 text-emerald-700");
+        }
+        case "kept_control":
+            return chip("Original kept", "bg-sky-100 text-sky-700");
+        case "killed_variant":
+            return chip(
+                typeof d.variant_name === "string" ? `Stopped “${d.variant_name}”` : "Variant stopped",
+                "bg-rose-100 text-rose-700"
+            );
+        case "paused_broken":
+            return chip("Needs your attention", "bg-amber-100 text-amber-700");
+        case "proposed_experiment":
+            return chip("Draft ready", "bg-violet-100 text-violet-700");
+        case "proposal_skipped":
+            return chip("No proposal", "bg-stone-100 text-stone-500");
+        case "proposal_failed":
+        case "error":
+            return chip("Error", "bg-rose-100 text-rose-700");
+        case "evaluated":
+            return chip("Test continues", "bg-stone-100 text-stone-500");
+        default:
+            return <span className="text-stone-300">—</span>;
     }
 }
 
@@ -838,52 +913,96 @@ export default function IndividualExperimentPage() {
                 </h2>
                 {actions.length === 0 ? (
                     <p className="text-xs text-stone-400 leading-relaxed bg-stone-50 border border-dashed border-stone-200 rounded-xl p-4">
-                        No evaluations yet — your agent checks running experiments every Monday at 9:00 UTC
+                        No evaluations yet — your agent checks running experiments daily at 9:00 UTC
                         and its decisions will show up here.
                     </p>
                 ) : (
-                    <div className="bg-white">
-                        <div className="flex flex-wrap items-start gap-y-6">
-                            {[...actions].reverse().map((action, i, list) => {
-                                const meta = agentActionMeta(action);
-                                const Icon = meta.icon;
-                                const summary = agentActionSummary(action);
-                                const isLast = i === list.length - 1;
-                                return (
-                                    <div key={action.id} className="flex items-start">
-                                        <div className="flex items-start gap-3 w-56 sm:w-64">
-                                            <div className="relative flex flex-col items-center shrink-0">
-                                                <div
-                                                    className={`size-9 rounded-full flex items-center justify-center ${meta.tone}`}
-                                                >
-                                                    <Icon className="size-4" strokeWidth={2} />
-                                                </div>
-                                            </div>
-                                            <div className="min-w-0 pt-0.5">
-                                                <p className="text-sm text-stone-700 leading-snug">
-                                                    <span className="font-semibold text-stone-900">
-                                                        {meta.title}
-                                                    </span>
-                                                    <span className="text-stone-500">
-                                                        {" — "}
+                    <div className="bg-white border border-stone-200 rounded-2xl shadow-xs overflow-hidden">
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="bg-stone-50 border-b border-stone-200">
+                                        <th className="text-[11px] font-medium uppercase tracking-wider text-stone-400 px-5 py-3">
+                                            Action
+                                        </th>
+                                        <th className="text-[11px] font-medium uppercase tracking-wider text-stone-400 px-4 py-3">
+                                            What happened
+                                        </th>
+                                        <th className="text-[11px] font-medium uppercase tracking-wider text-stone-400 px-4 py-3 text-right">
+                                            Visitors
+                                        </th>
+                                        <th className="text-[11px] font-medium uppercase tracking-wider text-stone-400 px-4 py-3">
+                                            Outcome
+                                        </th>
+                                        <th className="text-[11px] font-medium uppercase tracking-wider text-stone-400 px-5 py-3 text-right">
+                                            When
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-stone-100">
+                                    {actions.map((action) => {
+                                        const meta = agentActionMeta(action);
+                                        const Icon = meta.icon;
+                                        const summary = agentActionSummary(action);
+                                        const d = (action.detail ?? {}) as Record<string, unknown>;
+                                        const stats = Array.isArray(d.stats)
+                                            ? (d.stats as { exposures?: number }[])
+                                            : null;
+                                        const visitors = stats
+                                            ? stats.reduce((sum, s) => sum + (s.exposures ?? 0), 0)
+                                            : null;
+                                        return (
+                                            <tr
+                                                key={action.id}
+                                                className="hover:bg-stone-50/60 transition-colors"
+                                            >
+                                                {/* Action: icon chip + title */}
+                                                <td className="px-5 py-3.5 whitespace-nowrap">
+                                                    <div className="flex items-center gap-3">
+                                                        <div
+                                                            className={`size-8 rounded-lg flex items-center justify-center shrink-0 ${meta.tone}`}
+                                                        >
+                                                            <Icon className="size-4" strokeWidth={2} />
+                                                        </div>
+                                                        <span className="text-sm font-medium text-stone-800">
+                                                            {meta.title}
+                                                        </span>
+                                                    </div>
+                                                </td>
+                                                {/* What happened: the plain-English summary */}
+                                                <td className="px-4 py-3.5 min-w-64 max-w-md">
+                                                    <p className="text-xs text-stone-500 leading-relaxed line-clamp-2">
                                                         {summary.includes(" — ")
                                                             ? summary.split(" — ").slice(1).join(" — ")
                                                             : summary}
-                                                    </span>
-                                                </p>
-                                                <p className="text-xs text-stone-400 mt-1.5">
+                                                    </p>
+                                                </td>
+                                                {/* Visitors seen at evaluation time */}
+                                                <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                                                    {visitors !== null ? (
+                                                        <span className="text-sm font-robot font-medium text-stone-700 tabular-nums">
+                                                            {visitors.toLocaleString()}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-stone-300">—</span>
+                                                    )}
+                                                </td>
+                                                {/* Outcome chip / decision progress */}
+                                                <td className="px-4 py-3.5 whitespace-nowrap">
+                                                    {actionOutcome(action)}
+                                                </td>
+                                                {/* When (hover for the exact date) */}
+                                                <td
+                                                    className="px-5 py-3.5 text-right whitespace-nowrap text-xs text-stone-400"
+                                                    title={new Date(action.created_at).toLocaleString()}
+                                                >
                                                     {fmtRelative(action.created_at)}
-                                                </p>
-                                            </div>
-                                        </div>
-                                        {!isLast && (
-                                            <div className="hidden sm:flex items-center self-start h-9 w-10 shrink-0 px-1">
-                                                <div className="h-px w-full bg-stone-200" />
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 )}
