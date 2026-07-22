@@ -40,6 +40,8 @@ import { IconType } from "react-icons";
 
 import dashboardCta1 from "@/public/assets/dashboard-cta-1-2.svg";
 import dashboardCta2 from "@/public/assets/dashboard-cta-2.svg";
+import meshGradient from "@/public/assets/mesh-gradient.png"
+
 
 type Props = {
     displayName: string;
@@ -90,7 +92,7 @@ function actionMeta(item: AgentFeedItem): { title: string; icon: IconType; tone:
         case "paused_broken":
             return { title: "Paused — needs attention", icon: LuCircleAlert, tone: "bg-amber-100 text-amber-700" };
         case "proposed_experiment":
-            return { title: "Proposed a follow-up", icon: LuSparkles, tone: "bg-violet-100 text-violet-700" };
+            return { title: "Proposed a follow-up", icon: LuSparkles, tone: "bg-stone-100 text-stone-700" };
         case "proposal_skipped":
             return { title: "Skipped proposing", icon: LuSparkles, tone: "bg-stone-100 text-stone-600" };
         case "proposal_failed":
@@ -253,7 +255,7 @@ export default function OverviewSection({ displayName }: Props) {
 
             {/* Analyze bar — the front door of the whole product */}
             <div className="flex flex-col gap-2">
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
                     <input
                         ref={urlInputRef}
                         type="url"
@@ -262,15 +264,16 @@ export default function OverviewSection({ displayName }: Props) {
                         onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
                         placeholder="https://yourstartup.com"
                         disabled={analyzing}
-                        className="flex-1 text-sm text-stone-800 bg-stone-50 border border-stone-200 rounded-xl py-3 px-4 focus:outline-none focus:border-orange-600 placeholder:text-stone-400 disabled:opacity-60"
+                        className="flex-1 text-sm text-stone-800 bg-stone-50 border border-stone-200 rounded-lg py-3 px-4 focus:outline-none focus:border-orange-600 placeholder:text-stone-400 disabled:opacity-60"
                     />
                     <button
                         onClick={handleAnalyze}
                         disabled={analyzing || !url.trim()}
-                        className="text-sm font-medium text-white bg-orange-600 hover:bg-orange-700 disabled:bg-stone-300 disabled:cursor-not-allowed rounded-xl px-6 transition-colors"
+                        className="cursor-pointer w-max h-max relative bottom-0.5 text-sm bg-orange-600 flex items-center gap-2 hover:bg-orange-700 disabled:bg-stone-100 disabled:text-stone-300 disabled:cursor-not-allowed transition-colors text-white font-semibold px-4 py-2 rounded-lg drop-shadow-[0px_4px_0px_rgba(194,65,12,1)] disabled:drop-shadow-[0px_4px_0px_rgba(231,229,228,1)]"
                     >
                         {analyzing ? "Analyzing… ~30s" : "Analyze"}
                     </button>
+               
                 </div>
                 {analyzing && (
                     <p className="text-xs text-stone-500">
@@ -353,7 +356,7 @@ export default function OverviewSection({ displayName }: Props) {
             ) : (
                 <>
                     {/* ── Stat tiles (last 7 days) ────────────────────────── */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         <StatTile
                             icon={LuUsers}
                             value={weekly.exposures.toLocaleString()}
@@ -393,34 +396,47 @@ export default function OverviewSection({ displayName }: Props) {
                                         Your agent
                                     </h2>
                                 </div>
-                                <p className="text-[11px] text-stone-400">
-                                    Next check in <span className="font-robot font-medium text-stone-600">{untilNextRun()}</span> · daily at 9:00 UTC
+                                <p className="text-xs text-stone-400">
+                                    Next check in <span className="font-robot font-semibold text-stone-600 bg-stone-100 px-2 rounded-md py-0.5">{untilNextRun()}</span>
                                 </p>
+                                {/* <p className="text-xs text-stone-400">
+                                    Daily at 9:00 UTC
+                                </p> */}
                             </div>
 
                             {/* Pending proposal — the most valuable click on the page */}
                             {proposal && (
-                                <div className="mx-4 mt-4 border border-violet-200 bg-violet-50 rounded-xl p-4 flex flex-col gap-2">
-                                    <p className="text-[10px] font-medium uppercase tracking-wider text-violet-600">
-                                        Proposed next test — waiting on you
+                                <div
+                                    className="mx-4 mt-4 border border-stone-200 rounded-xl p-4 flex flex-col gap-2 shadow-xs"
+                                    style={{
+                                        backgroundImage: `url('${meshGradient.src}')`,
+                                        backgroundSize: 'cover',
+                                        backgroundRepeat: 'no-repeat',
+                                        backgroundPosition: 'center'
+                                    }}
+                                >
+                           
+                                    <p className="text-[10px] font-medium uppercase tracking-wider text-stone-600">
+                                        agent test proposal
                                     </p>
                                     <p className="text-sm font-semibold text-stone-800">{proposal.name}</p>
                                     {proposal.agent_rationale && (
-                                        <p className="text-xs text-violet-900/80 leading-relaxed line-clamp-3">
+                                        <p className="text-xs text-stone-900/80 leading-relaxed line-clamp-3">
                                             {proposal.agent_rationale}
                                         </p>
                                     )}
-                                    <div className="flex items-center gap-2 pt-1">
+                                    <div className="flex items-center gap-4 pt-1">
                                         <Link
                                             href={`/dashboard/experiments/${proposal.id}`}
-                                            className="text-xs font-medium text-white bg-orange-600 hover:bg-orange-700 rounded-lg px-4 py-2 transition-colors"
+                                            className="cursor-pointer w-max h-max text-xs bg-orange-600 flex items-center gap-2 hover:bg-orange-700 disabled:bg-stone-100 disabled:text-stone-300 disabled:cursor-not-allowed transition-colors text-white font-semibold px-4 py-2 rounded-lg drop-shadow-[0px_4px_0px_rgba(194,65,12,1)] disabled:drop-shadow-[0px_4px_0px_rgba(231,229,228,1)]"
                                         >
                                             Review &amp; activate
                                         </Link>
+                                   
                                         <button
                                             onClick={() => handleDismissProposal(proposal.id)}
                                             disabled={busy}
-                                            className="text-xs font-medium text-stone-500 hover:text-red-600 rounded-lg px-3 py-2 transition-colors disabled:opacity-50 cursor-pointer"
+                                            className="text-xs font-medium text-stone-500 hover:text-red-600 rounded-lg relative top-0.5 transition-colors disabled:opacity-50 cursor-pointer"
                                         >
                                             Dismiss
                                         </button>

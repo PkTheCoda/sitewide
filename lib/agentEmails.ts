@@ -40,14 +40,14 @@ async function log(
 
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
-type VariantRow = {
+export type VariantRow = {
     id: string;
     name: string;
     is_control: boolean;
     killed_at: string | null;
 };
 
-type VariantNumbers = { exposures: number; conversions: number; rate: number };
+export type VariantNumbers = { exposures: number; conversions: number; rate: number };
 
 // Unique visitors per variant — same counting rules as the evaluator.
 async function variantNumbers(
@@ -83,11 +83,11 @@ async function variantNumbers(
     return out;
 }
 
-function esc(s: unknown): string {
+export function esc(s: unknown): string {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function variantTable(variants: VariantRow[], numbers: Map<string, VariantNumbers>): string {
+export function variantTable(variants: VariantRow[], numbers: Map<string, VariantNumbers>): string {
     const control = variants.find((v) => v.is_control);
     const controlRate = control ? numbers.get(control.id)!.rate : 0;
     const rows = variants
@@ -117,7 +117,7 @@ function variantTable(variants: VariantRow[], numbers: Map<string, VariantNumber
         </tr>${rows}</table>`;
 }
 
-function shell(title: string, bodyHtml: string): string {
+export function shell(title: string, bodyHtml: string): string {
     return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1a1a1a;max-width:560px;margin:0 auto;padding:24px 16px;">
         <p style="font-size:13px;color:#888;margin:0 0 16px;">Sitewide — your optimization agent</p>
         <h2 style="font-size:19px;margin:0 0 16px;">${title}</h2>
@@ -130,7 +130,7 @@ function shell(title: string, bodyHtml: string): string {
 
 // ── Decision emails ──────────────────────────────────────────────────────────
 
-const DECISION_SUBJECTS: Record<string, (name: string) => string> = {
+export const DECISION_SUBJECTS: Record<string, (name: string) => string> = {
     promoted_winner: (n) => `🎉 Winner promoted: ${n}`,
     kept_control: (n) => `Test ended, original kept: ${n}`,
     paused_broken: (n) => `⚠️ Needs your attention: ${n} was paused`,
