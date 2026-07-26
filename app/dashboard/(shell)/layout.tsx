@@ -12,13 +12,14 @@ import {
   LuChartBar,
   LuFileSearch,
   LuFlaskConical,
+  LuHistory,
   LuLayoutDashboard,
   LuSearch,
   LuSettings,
 } from "react-icons/lu"
 import { VscLayoutSidebarLeftDock } from "react-icons/vsc"
 
-type Section = "overview" | "experiments" | "analyses" | "analytics" | "settings"
+type Section = "overview" | "experiments" | "activity" | "analyses" | "analytics" | "settings"
 
 type SidebarLink = {
   section: Section
@@ -30,6 +31,7 @@ type SidebarLink = {
 const sidebarLinks: SidebarLink[] = [
   { section: "overview", name: "Overview", href: "/dashboard", icon: LuLayoutDashboard },
   { section: "experiments", name: "Experiments", href: "/dashboard/experiments", icon: LuFlaskConical },
+  { section: "activity", name: "Activity", href: "/dashboard/activity", icon: LuHistory },
   { section: "analyses", name: "Analyses", href: "/dashboard/analyses", icon: LuFileSearch },
   { section: "analytics", name: "Analytics", href: "/dashboard/analytics", icon: LuChartBar },
 ]
@@ -37,6 +39,7 @@ const sidebarLinks: SidebarLink[] = [
 function getActiveSection(pathname: string): Section {
   if (pathname === "/dashboard") return "overview"
   if (pathname.startsWith("/dashboard/experiments")) return "experiments"
+  if (pathname.startsWith("/dashboard/activity")) return "activity"
   if (pathname.startsWith("/dashboard/analyses")) return "analyses"
   if (pathname.startsWith("/dashboard/analytics")) return "analytics"
   if (pathname.startsWith("/dashboard/settings")) return "settings"
