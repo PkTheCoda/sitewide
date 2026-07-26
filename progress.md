@@ -75,6 +75,8 @@
 - [x] Full account deletion — `POST /api/account/delete` (own-token auth; clears Storage screenshots → comments → reports by hand, then deletes the auth user which cascades experiments+sites); Settings danger-zone two-step delete button
 - [x] Delete a single experiment — `deleteExperiment` (client, RLS-scoped; cascades variants/events/agent_actions/daily-views) + two-step delete button on each Experiments card
 - [x] Delete a single analysis — `POST /api/report/delete` (own-token auth, verifies report ownership; clears screenshots → comments → report; experiments keep `report_id → null` by design) + two-step delete button on each Analyses card
+- [x] Bot filtering (2026-07-26) — `lib/botFilter.ts` (~100 UA substrings) shipped in `__SW_EMBED__.bots` so the list is shared with the server and never lives in `snippet.js`; snippet also checks `navigator.webdriver` + automation globals + `?sw_optout=1` sticky opt-out for internal traffic; `/api/snippet/event` re-checks the real `User-Agent` header before any DB work. Bots still GET the variant (skipping it would be cloaking) and send zero events, `selector_miss` included. **No behavioural filtering** — engagement is what the variant changes, so filtering on it can invert a result. 18 new jsdom assertions incl. false-positive guards (Cubot phones, YaBrowser, in-app webviews)
+- [ ] Bot filtering v2 (only if the data asks for it): `bot_reason` column for retroactive re-analysis, SRM guardrail in the agent, "X% of traffic filtered" on the experiment page, datacenter-IP ranges
 - [ ] Playwright/Browserless variant preview render
 
 ---

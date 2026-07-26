@@ -40,6 +40,11 @@
  *      and disconnects a grace period after everything is applied.
  *   5. Reports exposure + conversion events as text/plain beacons (CORS
  *      "simple requests" — no preflight). The server dedupes per visitor.
+ *   6. Suppresses those events entirely for automated traffic — crawlers,
+ *      Lighthouse/uptime runs, WebDriver — and for browsers opted out with
+ *      ?sw_optout=1 (your own team). Detected traffic still SEES the variant;
+ *      only the counting stops, because serving bots a different page than
+ *      humans is cloaking.
  *
  * Anti-flicker strategy (the important part):
  *   - Target elements stay hidden (visibility:hidden — layout preserved)
@@ -156,6 +161,60 @@
       return; // never falls through to bucketing or tracking
     }
   }
+
+  // ── Automated traffic ─────────────────────────────────────────────────────
+  // Bots pollute results in the worst possible way: they rarely keep cookies,
+  // so every crawl is a fresh "visitor", and a handful of them is enough to
+  // push an experiment past the agent's 100-exposure floor on junk data.
+  //
+  // Detected traffic still GETS THE VARIANT — it just stops being counted.
+  // Serving Googlebot the control while humans see the variant is cloaking,
+  // which is a Google spam-policy violation; the gate therefore sits inside
+  // sendEvent, not around the apply loop (same shape as a killed variant).
+  //
+  // Only signals that exist BEFORE the visitor sees anything are used: user
+  // agent, the WebDriver flag, automation globals. Nothing behavioural —
+  // "bounced in 2s" and "never moved the mouse" describe most real humans on
+  // mobile, and filtering on engagement drops more visitors from the arm that
+  // increased engagement, which can invert a result.
+  //
+  // The list arrives in the embed (lib/botFilter.ts) so it stays shared with
+  // the server and updatable without touching this file. The fallback covers
+  // the legacy static install, where there is no embed.
+  var BOT_FALLBACK =
+    "bot/|bot;|bot)|+http|crawler|spider|headlesschrome|lighthouse|pagespeed|prerender|uptimerobot|wget|curl/";
+  function detectAutomation() {
+    // Internal traffic: ?sw_optout=1 marks this browser permanently untracked
+    // (?sw_optout=0 undoes it). Founders and their teams reload their own
+    // landing pages far more often than any crawler visits.
+    try {
+      var optParam = location.search.match(/[?&]sw_optout=([01])/);
+      if (optParam) {
+        if (optParam[1] === "1") localStorage.setItem("sw_optout", "1");
+        else localStorage.removeItem("sw_optout");
+      }
+      if (localStorage.getItem("sw_optout") === "1") return "opted out";
+    } catch (e) {
+      /* storage blocked — no opt-out available, carry on */
+    }
+
+    var ua = (navigator.userAgent || "").toLowerCase();
+    var tokens = ((EMBED && EMBED.bots) || BOT_FALLBACK).split("|");
+    for (var i = 0; i < tokens.length; i++) {
+      if (ua.indexOf(tokens[i]) !== -1) return "bot ua: " + tokens[i];
+    }
+
+    // Set by every WebDriver-controlled browser (Selenium, Playwright,
+    // Puppeteer). One boolean, no false positives — stealth plugins hide it,
+    // and that residue is not worth fingerprinting for.
+    if (navigator.webdriver === true) return "webdriver";
+    if (window._phantom || window.callPhantom || window.__nightmare || window.Cypress) {
+      return "automation global";
+    }
+    return null;
+  }
+  var AUTOMATED = detectAutomation();
+  if (AUTOMATED) dbg("automated traffic (" + AUTOMATED + ") — variants apply, events suppressed");
 
   // ── Visitor identity ──────────────────────────────────────────────────────
   function getVisitorId() {
@@ -333,6 +392,13 @@
   function sendEvent(experimentId, variantId, eventType) {
     if (FORCED_BUCKET !== null) {
       dbg("event suppressed (preview mode):", eventType);
+      return;
+    }
+    // Every event type, including selector_miss — a crawler that never
+    // finishes rendering must not be able to trip the agent's health check
+    // and pause a perfectly healthy experiment.
+    if (AUTOMATED) {
+      dbg("event suppressed (" + AUTOMATED + "):", eventType);
       return;
     }
     var body = JSON.stringify({

@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import path from "path";
 import { buildSnippetConfig } from "@/lib/snippetConfig";
+import { BOT_UA_PATTERN } from "@/lib/botFilter";
 
 // The one-line install: <script src="https://…/api/snippet/js/SITE_ID"></script>
 // placed synchronously in the <head>. Serves snippet.js with the site's config
@@ -42,7 +43,13 @@ export async function GET(
         // "</script" can never appear in this JSON (it's JSON.stringify output of
         // our own DB rows), but escape "<" anyway — this string is inert data, and
         // escaping makes injection through experiment copy structurally impossible.
-        const embed = JSON.stringify({ siteId, config }).replace(/</g, "\\u003c");
+        // `bots` ships the User-Agent list with the config so the snippet can
+        // drop automated traffic before it sends anything, without carrying the
+        // list in its own source (see lib/botFilter.ts).
+        const embed = JSON.stringify({ siteId, config, bots: BOT_UA_PATTERN }).replace(
+            /</g,
+            "\\u003c"
+        );
         const body = `var __SW_EMBED__ = ${embed};\n${getSnippetSource()}`;
 
         return new Response(body, {

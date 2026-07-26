@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { isBotUserAgent } from "@/lib/botFilter";
 
 // Public event ingest, called by the snippet (sendBeacon/fetch) from the
 // founder's domain. The unique index (experiment_id, visitor_id, event_type)
@@ -15,6 +16,15 @@ export function OPTIONS() {
 }
 
 export async function POST(request: Request) {
+    // Backstop for the filtering the snippet already does client-side: this
+    // reads the REAL User-Agent header, so it also covers legacy installs
+    // (whose embedded list may be stale) and anything that lied about
+    // navigator.userAgent. Free — the header is on the request either way —
+    // and it runs before any database work. 200 so a beacon never retries.
+    if (isBotUserAgent(request.headers.get("user-agent"))) {
+        return Response.json({ ok: true, filtered: "bot" }, { headers: CORS });
+    }
+
     let body: {
         experiment_id?: string;
         variant_id?: string;
