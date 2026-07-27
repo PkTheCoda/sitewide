@@ -41,6 +41,8 @@
 - [x] Builder UI at `/dashboard/report/[id]/builder`: hover hit-test canvas (smallest-box-wins), change types (text/style/hide), click + pageview goals, draft submit
 - [x] Image change type (URL swap, no storage) — img targets get Image/Hide tabs only
 - [x] Rich-text warning: `hasMarkup` flag captured; heading spans selectable as their own elements
+- [x] Time-to-decision estimator (builder step 5): power analysis (`lib/stats.ts → requiredSampleSizePerVariant`/`estimateTimeToDecision`, 95%/80%) turns traffic + baseline rate + expected lift into "~N days to a decision". Deliberately CALM (shown pre-commitment) — neutral tone for any reasonable wait, only escalates to a rose warning + nudge past 60 days. The per-variant sample size it computes is persisted as `min_sample_size`, so the date shown IS the threshold the agent waits for.
+- [x] Live time-to-decision countdown on the running experiment page (`experiments/[id]/page.tsx → estimatePace` + `SignificanceBanner`), off REAL accrual (slowest arm's exposures ÷ days running) so it beats the builder's a-priori guess. TWO regimes: (1) collecting → time to reach the sample gate; (2) inconclusive → past the gate but no winner, projects the sample needed to make the OBSERVED lift significant (95%/80%) so a founder stuck on "test continues" gets a real keep-going-vs-give-up number. Gated to ≥3 days of runtime; rose + "end it / go bolder" nudge past 60 days.
 - Later: compound variants (multi-element changes per variant), variant preview (Browserless render or snippet edit mode), selector self-healing when snippet reports a miss
 
 ### 2.1 Runner + Agent skeleton (done 2026-07-06)

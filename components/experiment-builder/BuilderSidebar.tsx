@@ -14,6 +14,7 @@ import {
 } from "@/lib/types";
 import VariantFields, { isValidImageUrl } from "./VariantFields";
 import GoalSection from "./GoalSection";
+import DecisionEstimator from "./DecisionEstimator";
 import PreviewLinks from "./PreviewLinks";
 import { buildPreviewLink } from "@/lib/preview";
 
@@ -87,6 +88,10 @@ export default function BuilderSidebar({
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [createdId, setCreatedId] = useState<string | null>(null);
+    // Per-variant sample size from the time-to-decision estimator. Persisted as
+    // min_sample_size so the agent waits for exactly the sample the founder was
+    // shown a date for.
+    const [estSampleSize, setEstSampleSize] = useState<number | null>(null);
 
     // Keep the change type valid for the selected element kind.
     useEffect(() => {
@@ -210,6 +215,7 @@ export default function BuilderSidebar({
             goal_type: goalType,
             goal_element: goalType === "click" ? goalElement : null,
             goal_page_path: goalType === "pageview" ? goalPagePath.trim() : null,
+            min_sample_size: estSampleSize ?? undefined,
         });
 
         setSubmitting(false);
@@ -413,6 +419,12 @@ export default function BuilderSidebar({
                                 className="text-xs text-slate-700 leading-relaxed bg-slate-50 border border-slate-200 rounded-md py-2 px-3 focus:outline-none focus:border-orange-600 placeholder-slate-400 resize-none"
                             />
                         </section>
+
+                        {/* Step 5 — time-to-decision reality check */}
+                        <DecisionEstimator
+                            groupCount={Math.max(variantPayloads.length, 1) + 1}
+                            onSampleSize={setEstSampleSize}
+                        />
                     </>
                 )}
             </div>

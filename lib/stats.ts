@@ -63,6 +63,64 @@ export function twoProportionZTest(
     return { z, p };
 }
 
+// ─── Power analysis: how long will this test take? ───────────────────────────
+//
+// Shown at experiment creation so a founder doesn't start a test that can never
+// reach a decision on their traffic. Answers "how many visitors per variant do
+// we need to detect this size of change?" and turns that into days.
+//
+// Fixed at the same statistical bar the agent enforces: 95% confidence
+// (two-tailed α = 0.05, matching `significant`) and 80% power — the standard
+// A/B-testing floor for "we'd actually catch a real lift this size". These two
+// z-values are constants for those settings; we hard-code them rather than
+// invert the normal CDF, since the product never varies α or power.
+const Z_ALPHA = 1.959964; // two-tailed 95% → P(|Z| < z) = 0.95
+const Z_BETA = 0.841621; //  80% power       → P(Z < z)   = 0.80
+
+// Visitors needed PER variant to detect a relative lift `mde` on a baseline
+// conversion rate `baseline` (both as fractions: baseline 0.05 = 5%, mde 0.20 =
+// +20% relative). Standard two-proportion sample-size formula. Returns null for
+// nonsensical inputs (rate outside (0,1), non-positive lift).
+export function requiredSampleSizePerVariant(baseline: number, mde: number): number | null {
+    if (!(baseline > 0 && baseline < 1) || !(mde > 0)) return null;
+    const p1 = baseline;
+    const p2 = Math.min(p1 * (1 + mde), 0.999999); // expected variant rate
+    const delta = p2 - p1;
+    if (delta <= 0) return null;
+    const n = ((Z_ALPHA + Z_BETA) ** 2 * (p1 * (1 - p1) + p2 * (1 - p2))) / (delta * delta);
+    return Math.ceil(n);
+}
+
+export type DecisionEstimate = {
+    perVariant: number; // visitors each arm must accumulate
+    totalVisitors: number; // across all arms (control + variants)
+    days: number; // calendar days to get there at the given daily traffic
+};
+
+// Turn traffic + baseline + expected lift into a time-to-decision estimate.
+//   dailyVisitors — visitors to the experiment PAGE per day (all get bucketed)
+//   groupCount    — total arms, i.e. control + variants (so more variants =
+//                   more total sample = a longer wait, which is the honest
+//                   signal we want the founder to feel)
+// Returns null when the inputs can't yield a real answer.
+export function estimateTimeToDecision(params: {
+    baseline: number;
+    mde: number;
+    dailyVisitors: number;
+    groupCount: number;
+}): DecisionEstimate | null {
+    const { baseline, mde, dailyVisitors, groupCount } = params;
+    if (!(dailyVisitors > 0) || groupCount < 2) return null;
+    const perVariant = requiredSampleSizePerVariant(baseline, mde);
+    if (perVariant === null) return null;
+
+    const totalVisitors = perVariant * groupCount;
+    // Traffic is split evenly across arms, so every arm fills at
+    // dailyVisitors / groupCount per day — they all cross the line together.
+    const days = Math.ceil(perVariant / (dailyVisitors / groupCount));
+    return { perVariant, totalVisitors, days };
+}
+
 // Compare every non-control variant against control.
 export function compareVariants(
     control: VariantStats,

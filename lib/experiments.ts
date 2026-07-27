@@ -26,6 +26,11 @@ export type NewExperiment = {
     goal_type: GoalType;
     goal_element: PageElement | null; // required for click goals
     goal_page_path: string | null;    // required for pageview goals
+    // Per-variant exposures the agent should wait for before it can call a
+    // winner. Derived from the builder's time-to-decision estimator (baseline +
+    // expected lift → power analysis) so the date shown to the founder is the
+    // SAME threshold the agent enforces. Omit to keep the DB default.
+    min_sample_size?: number;
 };
 
 // Split 100% of traffic evenly across control + variants.
@@ -62,6 +67,9 @@ export async function createExperiment(input: NewExperiment) {
             goal_selector: input.goal_element?.selector ?? null,
             goal_fallback: input.goal_element?.fallback ?? null,
             goal_page_path: input.goal_page_path,
+            // Only override the column default when the estimator produced a
+            // real number — a bare `undefined` would blow away the default.
+            ...(input.min_sample_size != null && { min_sample_size: input.min_sample_size }),
             status: "draft",
         })
         .select("id")

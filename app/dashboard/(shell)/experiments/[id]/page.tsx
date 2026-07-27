@@ -17,7 +17,7 @@ import {
 } from "@/lib/experiments";
 import { buildPreviewLink } from "@/lib/preview";
 import { agentActionSummary } from "@/lib/agentSummary";
-import { twoProportionZTest } from "@/lib/stats";
+import { requiredSampleSizePerVariant, twoProportionZTest } from "@/lib/stats";
 import {
     AgentAction,
     DailyStat,
@@ -97,6 +97,46 @@ function fmtDate(iso: string): string {
         day: "numeric",
         year: "numeric",
     });
+}
+
+// Compact "X days / months" phrasing shared by the collecting-phase countdown.
+function fmtDuration(days: number): string {
+    if (days <= 90) return `~${days} day${days === 1 ? "" : "s"}`;
+    const months = Math.round(days / 30);
+    if (months <= 18) return `~${months} months`;
+    const years = days / 365;
+    return years >= 2 ? `over ${Math.floor(years)} years` : "over a year";
+}
+
+// How much longer until a decision, read off the test's REAL accrual (the
+// slowest arm's own pace, slowest / daysRunning — the exact arm every gate
+// waits on). Two regimes:
+//   - collecting:  time to reach the sample gate the agent won't decide before.
+//   - inconclusive: past the gate but no winner. Project the sample needed to
+//     make the CURRENTLY OBSERVED gap significant (same 95%/80% power), so a
+//     founder who's watched "test continues" for weeks finally gets a real
+//     "keep going vs. give up" number instead of silence.
+// Gated to >=3 days of runtime: you can't read a daily rate off ramp-up, and a
+// founder shouldn't see a wild number on day one.
+type Pace = { perDay: number; daysRemaining: number; basis: "sample" | "significance" };
+function estimatePace(verdict: Verdict, daysRunning: number | null): Pace | null {
+    if (!daysRunning || daysRunning < 3 || verdict.slowest <= 0) return null;
+    const perDay = verdict.slowest / daysRunning;
+    if (perDay <= 0) return null;
+
+    if (verdict.phase === "collecting") {
+        const remaining = Math.max(0, verdict.minSample - verdict.slowest);
+        return { perDay, daysRemaining: Math.ceil(remaining / perDay), basis: "sample" };
+    }
+    // Only project a win when a challenger is actually ahead; if the leader
+    // trails control there's no gap to grow into significance.
+    if (verdict.phase === "inconclusive" && verdict.lift > 0) {
+        const required = requiredSampleSizePerVariant(verdict.controlRate, verdict.lift / 100);
+        if (required === null) return null;
+        const remaining = Math.max(0, required - verdict.slowest);
+        return { perDay, daysRemaining: Math.ceil(remaining / perDay), basis: "significance" };
+    }
+    return null;
 }
 
 function fmtRelative(iso: string): string {
@@ -240,6 +280,7 @@ type Verdict = {
     minSample: number;
     leaderName: string;
     leaderId: string;
+    controlRate: number; // observed control conversion rate (fraction)
     lift: number; // relative %, leader vs control
     confidence: number; // (1 - p) * 100
     winnerIsControl: boolean; // significant, but the original is ahead
@@ -290,6 +331,7 @@ function readVerdict(
         minSample,
         leaderName: leader.name,
         leaderId: leader.id,
+        controlRate,
         lift,
         confidence: (1 - pValue) * 100,
         winnerIsControl: phase === "significant" && lift <= 0,
@@ -298,7 +340,14 @@ function readVerdict(
 
 // The one-line verdict strip above the variant cards. Its whole job is to stop
 // a founder reading a 6-point gap on 80 visitors as "Variant B wins."
-function SignificanceBanner({ verdict }: { verdict: Verdict }) {
+function SignificanceBanner({ verdict, pace }: { verdict: Verdict; pace: Pace | null }) {
+    // A finish line that's realistically weeks and weeks out gets a warning
+    // tone + a nudge; anything nearer stays calm. `imminent` covers "you're
+    // basically there" so we don't say "~0 days".
+    const slow = pace !== null && pace.daysRemaining > 60;
+    const imminent = pace !== null && pace.daysRemaining <= 1;
+    const liftLabel = `${verdict.lift > 0 ? "+" : ""}${verdict.lift.toFixed(1)}%`;
+
     if (verdict.phase === "collecting") {
         const progress = Math.min(1, verdict.slowest / verdict.minSample);
         return (
@@ -318,10 +367,27 @@ function SignificanceBanner({ verdict }: { verdict: Verdict }) {
                         style={{ width: `${Math.max(3, progress * 100)}%` }}
                     />
                 </div>
-                <p className="text-xs text-stone-500 leading-relaxed">
-                    Conversion rates this early swing on a handful of visitors. Your agent won&apos;t
-                    call a winner until every variant clears {verdict.minSample.toLocaleString()} visitors.
-                </p>
+                {/* Real-accrual countdown — only once there's enough runtime to
+                    read a daily rate (see estimatePace). Tinted rose when the
+                    finish line is realistically weeks and weeks away. */}
+                {pace !== null ? (
+                    <p
+                        className={`text-xs leading-relaxed ${
+                            slow ? "text-rose-700" : "text-stone-500"
+                        }`}
+                    >
+                        At the current pace (~{Math.round(pace.perDay).toLocaleString()} visitors/day
+                        per group), you&apos;re on track for a decision in{" "}
+                        <span className="font-medium">{fmtDuration(pace.daysRemaining)}</span>.
+                        {slow &&
+                            " That's a long way off — a bolder change or a higher-traffic page would get you there sooner."}
+                    </p>
+                ) : (
+                    <p className="text-xs text-stone-500 leading-relaxed">
+                        Conversion rates this early swing on a handful of visitors. Your agent won&apos;t
+                        call a winner until every variant clears {verdict.minSample.toLocaleString()} visitors.
+                    </p>
+                )}
             </div>
         );
     }
@@ -358,16 +424,44 @@ function SignificanceBanner({ verdict }: { verdict: Verdict }) {
         );
     }
 
-    // inconclusive: enough data, but the gap isn't distinguishable from noise
+    // inconclusive: enough data, but the gap isn't distinguishable from noise.
+    // This is where a founder needs "how much longer?" most — they've cleared
+    // the sample gate and could otherwise wait forever on a gap that never
+    // resolves. Project time-to-significance from the observed lift.
     return (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3">
-            <p className="text-sm font-medium text-stone-700 flex items-center gap-2">
-                <LuSearch className="size-4 text-stone-400" strokeWidth={2} />
-                No clear winner yet — the difference isn&apos;t statistically significant
-            </p>
-            <span className="text-[11px] font-medium text-stone-500 bg-stone-100 rounded-full px-2.5 py-1 tabular-nums">
-                {verdict.confidence.toFixed(0)}% confidence · need 95%
-            </span>
+        <div
+            className={`flex flex-col gap-2 rounded-xl border px-4 py-3 ${
+                slow ? "border-rose-200 bg-rose-50" : "border-stone-200 bg-white"
+            }`}
+        >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium text-stone-700 flex items-center gap-2">
+                    <LuSearch className="size-4 text-stone-400" strokeWidth={2} />
+                    No clear winner yet — the difference isn&apos;t statistically significant
+                </p>
+                <span className="text-[11px] font-medium text-stone-500 bg-stone-100 rounded-full px-2.5 py-1 tabular-nums">
+                    {verdict.confidence.toFixed(0)}% confidence · need 95%
+                </span>
+            </div>
+            {pace !== null && pace.basis === "significance" && (
+                <p className={`text-xs leading-relaxed ${slow ? "text-rose-700" : "text-stone-500"}`}>
+                    {imminent ? (
+                        <>
+                            You&apos;re right at the threshold — if the {liftLabel} gap holds, this
+                            could resolve any day now.
+                        </>
+                    ) : (
+                        <>
+                            If the current {liftLabel} gap holds, you&apos;re on track for 95%
+                            confidence in{" "}
+                            <span className="font-medium">{fmtDuration(pace.daysRemaining)}</span>{" "}
+                            at ~{Math.round(pace.perDay).toLocaleString()} visitors/day per group.
+                        </>
+                    )}
+                    {slow &&
+                        " That's a long way off — the gap may be too small to prove out here. Consider ending this test or trying a bolder change."}
+                </p>
+            )}
         </div>
     );
 }
@@ -669,6 +763,9 @@ export default function IndividualExperimentPage() {
     // agent uses, so the cards and the agent timeline can never disagree.
     const minSample = Math.max(SAMPLE_FLOOR, experiment.min_sample_size || 0);
     const verdict = readVerdict(variants, counts, experiment.min_sample_size);
+    // Data-driven time-to-decision, shown inside the "collecting" banner once
+    // the test has run long enough to have a real accrual rate (>=3 days).
+    const pace = verdict ? estimatePace(verdict, daysRunning) : null;
     const controlVariant = variants.find((v) => v.is_control) ?? null;
     const controlCounts = controlVariant
         ? counts[controlVariant.id] ?? { exposures: 0, conversions: 0 }
@@ -933,7 +1030,7 @@ export default function IndividualExperimentPage() {
             <div className="flex flex-col gap-3 px-6 bg-linear-to-t pt-4 from-white to-stone-100 from-60% rounded-xl">
                 {/* Single honest verdict on the whole test, so two big rates
                     side-by-side don't get read as a result before they are one. */}
-                {verdict && <SignificanceBanner verdict={verdict} />}
+                {verdict && <SignificanceBanner verdict={verdict} pace={pace} />}
                 <div className="grid grid-cols-2 gap-4">
                     {variants.map((variant) => {
                         const c = counts[variant.id] ?? { exposures: 0, conversions: 0 };
