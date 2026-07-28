@@ -8,6 +8,8 @@ import { getReport, getComments } from "@/lib/reports";
 import { Comment, Report } from "@/lib/types";
 import ScreenshotOverlay from "@/components/report/ScreenshotOverlay";
 import CommentSidebar from "@/components/report/CommentSidebar";
+import CanvasHeader from "@/components/CanvasHeader";
+import { LuFlaskConical } from "react-icons/lu";
 
 export default function ReportPage() {
     const params = useParams<{ id: string }>();
@@ -53,21 +55,21 @@ export default function ReportPage() {
 
     return (
         <ProtectedRoute>
-            <div className="w-full min-h-screen bg-slate-100">
+            <div className="w-full min-h-screen bg-stone-100">
                 {loading ? (
-                    <div className="flex items-center justify-center min-h-screen text-slate-500">
+                    <div className="flex items-center justify-center min-h-screen text-stone-500">
                         Loading report…
                     </div>
                 ) : !report ? (
-                    <div className="flex items-center justify-center min-h-screen text-slate-500">
+                    <div className="flex items-center justify-center min-h-screen text-stone-500">
                         Report not found.
                     </div>
                 ) : report.status === "error" ? (
-                    <div className="flex items-center justify-center min-h-screen text-slate-500">
+                    <div className="flex items-center justify-center min-h-screen text-stone-500">
                         {report.error_message ?? "Something went wrong analyzing this page."}
                     </div>
                 ) : report.status !== "complete" || !report.screenshot_url ? (
-                    <div className="flex items-center justify-center min-h-screen text-slate-500">
+                    <div className="flex items-center justify-center min-h-screen text-stone-500">
                         Analysis in progress…
                     </div>
                 ) : (
@@ -79,22 +81,25 @@ export default function ReportPage() {
                             onNavigate={navigate}
                         />
 
-                        <div className="flex-1 px-8 py-4">
-                            <div className="flex items-center justify-between">
-                                <Link
-                                    href="/dashboard"
-                                    className="text-sm text-slate-500 hover:text-orange-600 transition-colors"
-                                >
-                                    ← Back to dashboard
-                                </Link>
-                                <Link
-                                    href={`/dashboard/report/${report.id}/builder`}
-                                    className="text-xs font-medium text-white bg-orange-600 hover:bg-orange-700 rounded-md px-3 py-2 transition-colors"
-                                >
-                                    Create experiment
-                                </Link>
-                            </div>
-                            <div className="mt-4">
+                        <div className="flex-1 min-w-0">
+                            <CanvasHeader
+                                crumbs={[
+                                    { label: "Dashboard", href: "/dashboard" },
+                                    { label: "Report" },
+                                ]}
+                                url={report.url}
+                                score={report.overall_score}
+                                right={
+                                    <Link
+                                        href={`/dashboard/report/${report.id}/builder`}
+                                        className="flex items-center gap-1.5 text-xs font-semibold text-white bg-orange-600 hover:bg-orange-700 rounded-lg px-4 py-2 transition-colors drop-shadow-[0px_4px_0px_rgba(194,65,12,1)]"
+                                    >
+                                        <LuFlaskConical className="size-3.5" />
+                                        Create experiment
+                                    </Link>
+                                }
+                            />
+                            <div className="px-8 pb-8">
                                 <ScreenshotOverlay
                                     screenshotUrl={report.screenshot_url}
                                     comments={comments}

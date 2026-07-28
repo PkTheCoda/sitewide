@@ -2,8 +2,9 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import CanvasHeader from "@/components/CanvasHeader";
+import { LuMousePointerClick } from "react-icons/lu";
 import { getReport, getComments } from "@/lib/reports";
 import { Comment, PageElement, Report } from "@/lib/types";
 import BuilderCanvas from "@/components/experiment-builder/BuilderCanvas";
@@ -120,21 +121,24 @@ function ExperimentBuilder() {
                             onReset={handleReset}
                         />
 
-                        <div className="flex-1 px-8 py-4">
-                            <div className="flex items-center justify-between">
-                                <Link
-                                    href={`/dashboard/report/${report.id}`}
-                                    className="text-sm text-stone-500 hover:text-orange-600 transition-colors"
-                                >
-                                    ← Back to report
-                                </Link>
-                                {pickingGoal && (
-                                    <span className="text-xs font-medium text-emerald-700 bg-emerald-100 rounded-full px-3 py-1">
-                                        Picking conversion goal — click an element
-                                    </span>
-                                )}
-                            </div>
-                            <div className="mt-4">
+                        <div className="flex-1 min-w-0">
+                            <CanvasHeader
+                                crumbs={[
+                                    { label: "Dashboard", href: "/dashboard" },
+                                    { label: "Report", href: `/dashboard/report/${report.id}` },
+                                    { label: "New experiment" },
+                                ]}
+                                url={report.url}
+                                right={
+                                    pickingGoal ? (
+                                        <span className="flex items-center gap-2 text-xs font-medium text-emerald-700 bg-emerald-100 border border-emerald-200 rounded-full px-3.5 py-2 shadow-xs">
+                                            <LuMousePointerClick className="size-3.5" />
+                                            Click the element that counts as a conversion
+                                        </span>
+                                    ) : undefined
+                                }
+                            />
+                            <div className="px-8 pb-8">
                                 <BuilderCanvas
                                     screenshotUrl={report.screenshot_url!}
                                     elements={report.elements}

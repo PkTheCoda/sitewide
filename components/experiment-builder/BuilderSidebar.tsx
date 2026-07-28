@@ -287,8 +287,8 @@ export default function BuilderSidebar({
                         Experiment created
                     </h3>
                     <p className="text-xs text-stone-500 mt-1 leading-relaxed">
-                        Saved as a draft. It starts running once your snippet is installed
-                        and the experiment is activated.
+                        Saved as a draft — one step left: activate it so it starts
+                        showing variants to visitors.
                     </p>
                 </div>
                 {previewLinks.length > 0 && (
@@ -303,9 +303,15 @@ export default function BuilderSidebar({
                     </div>
                 )}
                 <div className="flex flex-col gap-3 w-full mt-2">
+                    <Link
+                        href={`/dashboard/experiments/${createdId}`}
+                        className="text-xs font-semibold text-center text-white bg-orange-600 hover:bg-orange-700 rounded-lg py-2.5 transition-colors drop-shadow-[0px_4px_0px_rgba(194,65,12,1)]"
+                    >
+                        Review &amp; activate →
+                    </Link>
                     <button
                         onClick={resetForm}
-                        className="cursor-pointer text-xs font-semibold text-white bg-orange-600 hover:bg-orange-700 rounded-lg py-2.5 transition-colors drop-shadow-[0px_4px_0px_rgba(194,65,12,1)]"
+                        className="cursor-pointer text-xs font-medium text-stone-600 bg-white hover:bg-stone-50 border border-stone-200 rounded-lg py-2.5 transition-colors"
                     >
                         Create another experiment
                     </button>
