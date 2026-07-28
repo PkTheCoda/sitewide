@@ -2,23 +2,38 @@
 
 import { ReactNode } from "react";
 import { LuCheck, LuInfo } from "react-icons/lu";
+import * as Tooltip from "@radix-ui/react-tooltip";
 
 // Tiny hover tooltip — replaces the sidebar's old inline explainer paragraphs
-// so each step stays scannable. Left-anchored (not centered) so it never clips
-// against the sidebar's overflow-y scroll container.
+// so each step stays scannable. Radix renders the bubble in a portal, so it
+// floats over the canvas instead of getting clipped by (or forcing a scrollbar
+// on) the sidebar's overflow-y container, and flips away from screen edges.
 export function Hint({ text, side = "bottom" }: { text: string; side?: "top" | "bottom" }) {
     return (
-        <span className="group/hint relative inline-flex items-center">
-            <LuInfo className="size-3.5 text-stone-300 group-hover/hint:text-stone-500 transition-colors cursor-help" />
-            <span
-                role="tooltip"
-                className={`pointer-events-none absolute left-0 z-50 w-56 rounded-lg bg-stone-800 px-3 py-2 text-[11px] font-normal normal-case tracking-normal leading-relaxed text-stone-100 shadow-lg opacity-0 group-hover/hint:opacity-100 transition-opacity duration-150 ${
-                    side === "bottom" ? "top-full mt-1.5" : "bottom-full mb-1.5"
-                }`}
-            >
-                {text}
-            </span>
-        </span>
+        <Tooltip.Provider delayDuration={150}>
+            <Tooltip.Root>
+                <Tooltip.Trigger asChild>
+                    <button
+                        type="button"
+                        aria-label="More info"
+                        className="inline-flex items-center text-stone-300 hover:text-stone-500 focus-visible:text-stone-500 data-[state=delayed-open]:text-stone-500 data-[state=instant-open]:text-stone-500 transition-colors cursor-help focus:outline-none"
+                    >
+                        <LuInfo className="size-3.5" />
+                    </button>
+                </Tooltip.Trigger>
+                <Tooltip.Portal>
+                    <Tooltip.Content
+                        side={side}
+                        align="start"
+                        sideOffset={6}
+                        collisionPadding={12}
+                        className="z-50 w-56 rounded-lg bg-stone-800 px-3 py-2 text-[11px] font-normal normal-case tracking-normal leading-relaxed text-stone-100 shadow-lg"
+                    >
+                        {text}
+                    </Tooltip.Content>
+                </Tooltip.Portal>
+            </Tooltip.Root>
+        </Tooltip.Provider>
     );
 }
 
