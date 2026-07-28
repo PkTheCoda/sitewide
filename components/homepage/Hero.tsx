@@ -38,15 +38,15 @@ export default function Hero() {
         <div className="flex flex-col gap-y-6 items-center justify-center col-start-5 col-span-8 row-start-2 row-span-5 bg-slate-100">
           
             <div className="flex flex-col gap-y-6 items-center justify-center bg-white w-full h-full rounded-md">
-                <div className="flex items-center gap-2 bg-slate-50 bg-opacity-90 rounded-full p-1 pr-3 text-slate-900 font-medium w-fit">
+                {/* <div className="flex items-center gap-2 bg-slate-50 bg-opacity-90 rounded-full p-1 pr-3 text-slate-900 font-medium w-fit">
                     <span className="flex items-center justify-center rounded-full bg-orange-600 w-7 h-7">
-                    {/* Waitlist icon — swap this for desired icon */}
+                    
                     <PiClockAfternoonDuotone className="size-5 text-white"/>
                     </span>
                     <h5 className="text-sm font-medium">
                     Join the Waitlist for early access!
                     </h5>
-                </div>
+                </div> */}
                 <h1 className="seven-title text-center tracking-tighter">
                     AI Agents that <br /> <span className="">Fix your Funnel</span>
                 </h1>
@@ -54,12 +54,12 @@ export default function Hero() {
                     Sitewide is the agentic CRO toolkit for founders to {" "}
                     <span className="bg-slate-100 p-1 rounded-md font-medium">generate, analyze, and automate funnel testing.</span>
                 </h4>
-                <form
+                {/* <form
                 className="flex items-center justify-between w-full max-w-lg bg-white border border-slate-200 rounded-2xl p-2 shadow-[0_0px_60px_-10px_rgba(0,0,0,0.1)]"
                 onSubmit={(e) => e.preventDefault()}
                 >
                 <div className="flex items-center ml-2">
-                    {/* Globe Icon */}
+
                     <span className="mr-2 flex items-center text-slate-400">
                     <CiGlobe className="size-5"/>
                     </span>
@@ -77,7 +77,7 @@ export default function Hero() {
                 >
                     <IoIosArrowRoundForward className="size-6"/>
                 </button>
-                </form>
+                </form> */}
             </div>
 
         </div>
