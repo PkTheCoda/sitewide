@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/services/context/authContext";
@@ -150,6 +150,47 @@ function fmtRelative(iso: string): string {
     if (days === 1) return "Yesterday";
     if (days < 14) return `${days}d ago`;
     return fmtDate(iso);
+}
+
+// "every variant needs 100 visitors…" → "Every variant needs 100 visitors…"
+function sentence(s: string): string {
+    return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// hours+minutes until the next daily agent run (9:00 UTC)
+function untilNextRun(): string {
+    const now = new Date();
+    const next = new Date(now);
+    next.setUTCHours(9, 0, 0, 0);
+    if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+    const mins = Math.round((next.getTime() - now.getTime()) / 60_000);
+    if (mins < 60) return `${mins}m`;
+    return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+// Consecutive identical checks ("waiting on data" nine days straight) fold
+// into one row — the timeline should read as a story, not a stutter. Groups
+// key on action + reason; decisive actions never repeat so they never fold.
+//
+// EXCEPT recent activity: anything from the last 3 days stays a solo row
+// (unique key), so a founder waking up sees exactly what happened overnight —
+// never just a ×N counter ticking up. The render puts an "Earlier" divider
+// where recent rows end and folded history begins.
+const RECENT_MS = 3 * 24 * 3600 * 1000;
+
+type ActionGroup = { items: AgentAction[]; recent: boolean };
+function groupActions(actions: AgentAction[]): ActionGroup[] {
+    const groups: (ActionGroup & { key: string })[] = [];
+    for (const action of actions) {
+        const d = (action.detail ?? {}) as Record<string, unknown>;
+        const recent = Date.now() - new Date(action.created_at).getTime() < RECENT_MS;
+        // solo key = never merges (and old rows can't merge across the boundary)
+        const key = recent ? `solo:${action.id}` : `${action.action}:${d.reason ?? ""}`;
+        const last = groups[groups.length - 1];
+        if (last && last.key === key) last.items.push(action);
+        else groups.push({ key, items: [action], recent });
+    }
+    return groups;
 }
 
 function agentActionMeta(action: AgentAction): {
@@ -338,131 +379,236 @@ function readVerdict(
     };
 }
 
-// The one-line verdict strip above the variant cards. Its whole job is to stop
-// a founder reading a 6-point gap on 80 visitors as "Variant B wins."
+// Tone for one verdict state — border/fill + the colored icon chip + title.
+type BannerTone = { border: string; bg: string; chip: string; title: string };
+
+// Shared shell so every verdict state reads as one designed component, in the
+// same visual language as the variant cards + agent timeline right below it:
+// a colored icon chip, a title/subtitle, an optional status chip on the right,
+// and optional detail underneath.
+function BannerShell({
+    tone,
+    icon: Icon,
+    title,
+    subtitle,
+    aside,
+    children,
+}: {
+    tone: BannerTone;
+    icon: IconType;
+    title: React.ReactNode;
+    subtitle?: React.ReactNode;
+    aside?: React.ReactNode;
+    children?: React.ReactNode;
+}) {
+    return (
+        <div className={`flex flex-col gap-3 rounded-xl border p-4 ${tone.border} ${tone.bg}`}>
+            <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                    <div className={`size-9 rounded-lg flex items-center justify-center shrink-0 ${tone.chip}`}>
+                        <Icon className="size-[18px]" strokeWidth={2} />
+                    </div>
+                    <div className="min-w-0">
+                        <p className={`text-sm font-medium ${tone.title}`}>{title}</p>
+                        {subtitle && (
+                            <p className="text-xs text-stone-500 mt-0.5 leading-relaxed">{subtitle}</p>
+                        )}
+                    </div>
+                </div>
+                {aside && <div className="shrink-0">{aside}</div>}
+            </div>
+            {children}
+        </div>
+    );
+}
+
+// The time-to-decision readout, styled like the app's stat tiles: a small
+// uppercase label over a big font-robot number, a hairline, then the plain-
+// English detail. Reused by the collecting countdown and the inconclusive
+// time-to-significance projection so both feel like the same instrument.
+type StripTone = {
+    border: string;
+    bg: string;
+    label: string;
+    value: string;
+    detail: string;
+    divider: string;
+};
+const CALM_STRIP: StripTone = {
+    border: "border-stone-200",
+    bg: "bg-stone-50",
+    label: "text-stone-400",
+    value: "text-stone-800",
+    detail: "text-stone-500",
+    divider: "bg-stone-200",
+};
+const WARN_STRIP: StripTone = {
+    border: "border-rose-200",
+    bg: "bg-white/70",
+    label: "text-rose-400",
+    value: "text-rose-700",
+    detail: "text-rose-700/90",
+    divider: "bg-rose-200",
+};
+function EstimateStrip({
+    tone,
+    label,
+    value,
+    detail,
+}: {
+    tone: StripTone;
+    label: string;
+    value: string;
+    detail: React.ReactNode;
+}) {
+    return (
+        <div className={`flex items-center gap-3.5 rounded-lg border px-3.5 py-2.5 ${tone.border} ${tone.bg}`}>
+            <div className="shrink-0">
+                <p className={`text-[10px] uppercase tracking-wider font-medium ${tone.label}`}>{label}</p>
+                <p className={`font-robot text-lg font-semibold tabular-nums leading-tight ${tone.value}`}>
+                    {value}
+                </p>
+            </div>
+            <div className={`self-stretch w-px ${tone.divider}`} />
+            <p className={`text-xs leading-relaxed ${tone.detail}`}>{detail}</p>
+        </div>
+    );
+}
+
+// The verdict banner above the variant cards. Its whole job is to stop a
+// founder reading a 6-point gap on 80 visitors as "Variant B wins" — and, once
+// there's a real pace, to tell them how much longer the wait is.
 function SignificanceBanner({ verdict, pace }: { verdict: Verdict; pace: Pace | null }) {
-    // A finish line that's realistically weeks and weeks out gets a warning
-    // tone + a nudge; anything nearer stays calm. `imminent` covers "you're
-    // basically there" so we don't say "~0 days".
+    // A finish line realistically weeks and weeks out gets a warning tone + a
+    // nudge; nearer stays calm. `imminent` covers "basically there" so we never
+    // print "~0 days".
     const slow = pace !== null && pace.daysRemaining > 60;
     const imminent = pace !== null && pace.daysRemaining <= 1;
     const liftLabel = `${verdict.lift > 0 ? "+" : ""}${verdict.lift.toFixed(1)}%`;
+    const perDay = pace ? Math.round(pace.perDay).toLocaleString() : "0";
 
+    const confidenceChip = (classes: string, suffix = "") => (
+        <span className={`text-[11px] font-medium rounded-full px-2.5 py-1 tabular-nums ${classes}`}>
+            {verdict.confidence.toFixed(0)}% confidence{suffix}
+        </span>
+    );
+
+    // ── Collecting — still filling the sample gate ───────────────────────────
     if (verdict.phase === "collecting") {
         const progress = Math.min(1, verdict.slowest / verdict.minSample);
+        const tone: BannerTone = slow
+            ? { border: "border-rose-200", bg: "bg-rose-50", chip: "bg-rose-100 text-rose-600", title: "text-rose-900" }
+            : { border: "border-stone-200", bg: "bg-stone-50", chip: "bg-amber-100 text-amber-600", title: "text-stone-800" };
         return (
-            <div className="flex flex-col gap-2 rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-stone-700 flex items-center gap-2">
-                        <LuHourglass className="size-4 text-amber-500" strokeWidth={2} />
-                        Too early to compare — still gathering data
-                    </p>
-                    <span className="text-[11px] text-stone-500 font-robot tabular-nums">
-                        {verdict.slowest.toLocaleString()} / {verdict.minSample.toLocaleString()} visitors
+            <BannerShell
+                tone={tone}
+                icon={LuHourglass}
+                title="Still gathering data"
+                subtitle="Too early to compare — rates swing on a handful of visitors this early."
+                aside={
+                    <span className="text-[11px] font-medium text-stone-500 bg-stone-100 rounded-full px-2.5 py-1 font-robot tabular-nums">
+                        {verdict.slowest.toLocaleString()} / {verdict.minSample.toLocaleString()}
                     </span>
-                </div>
-                <div className="h-1.5 bg-stone-200 rounded-full overflow-hidden">
+                }
+            >
+                <div className="h-1.5 bg-stone-200/80 rounded-full overflow-hidden">
                     <div
-                        className="h-full rounded-full bg-amber-400"
+                        className={`h-full rounded-full ${slow ? "bg-rose-400" : "bg-amber-400"}`}
                         style={{ width: `${Math.max(3, progress * 100)}%` }}
                     />
                 </div>
-                {/* Real-accrual countdown — only once there's enough runtime to
-                    read a daily rate (see estimatePace). Tinted rose when the
-                    finish line is realistically weeks and weeks away. */}
                 {pace !== null ? (
-                    <p
-                        className={`text-xs leading-relaxed ${
-                            slow ? "text-rose-700" : "text-stone-500"
-                        }`}
-                    >
-                        At the current pace (~{Math.round(pace.perDay).toLocaleString()} visitors/day
-                        per group), you&apos;re on track for a decision in{" "}
-                        <span className="font-medium">{fmtDuration(pace.daysRemaining)}</span>.
-                        {slow &&
-                            " That's a long way off — a bolder change or a higher-traffic page would get you there sooner."}
-                    </p>
+                    <EstimateStrip
+                        tone={slow ? WARN_STRIP : CALM_STRIP}
+                        label="Est. time to decision"
+                        value={fmtDuration(pace.daysRemaining)}
+                        detail={
+                            slow ? (
+                                <>
+                                    At ~{perDay}/day per group — a long way off. A bolder change or a
+                                    higher-traffic page would get you there sooner.
+                                </>
+                            ) : (
+                                <>
+                                    At ~{perDay} visitors/day per group, until every arm clears{" "}
+                                    {verdict.minSample.toLocaleString()}.
+                                </>
+                            )
+                        }
+                    />
                 ) : (
                     <p className="text-xs text-stone-500 leading-relaxed">
-                        Conversion rates this early swing on a handful of visitors. Your agent won&apos;t
-                        call a winner until every variant clears {verdict.minSample.toLocaleString()} visitors.
+                        Your agent won&apos;t call a winner until every variant clears{" "}
+                        {verdict.minSample.toLocaleString()} visitors.
                     </p>
                 )}
-            </div>
+            </BannerShell>
         );
     }
 
+    // ── A challenger won ─────────────────────────────────────────────────────
     if (verdict.phase === "significant" && !verdict.winnerIsControl) {
         return (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-                <p className="text-sm font-medium text-emerald-800 flex items-center gap-2">
-                    <LuTrophy className="size-4 text-emerald-600" strokeWidth={2} />
-                    {verdict.leaderName} is a statistically significant winner
-                    <span className="font-normal text-emerald-700">
-                        ({verdict.lift > 0 ? "+" : ""}
-                        {verdict.lift.toFixed(1)}% lift)
-                    </span>
-                </p>
-                <span className="text-[11px] font-medium text-emerald-700 bg-emerald-100 rounded-full px-2.5 py-1 tabular-nums">
-                    {verdict.confidence.toFixed(0)}% confidence
-                </span>
-            </div>
+            <BannerShell
+                tone={{ border: "border-emerald-200", bg: "bg-emerald-50", chip: "bg-emerald-100 text-emerald-600", title: "text-emerald-900" }}
+                icon={LuTrophy}
+                title={`${verdict.leaderName} is a statistically significant winner`}
+                subtitle={<span className="text-emerald-700">{liftLabel} lift over the original</span>}
+                aside={confidenceChip("text-emerald-700 bg-emerald-100")}
+            />
         );
     }
 
+    // ── The original held ────────────────────────────────────────────────────
     if (verdict.phase === "significant" && verdict.winnerIsControl) {
         return (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3">
-                <p className="text-sm font-medium text-sky-800 flex items-center gap-2">
-                    <LuShield className="size-4 text-sky-600" strokeWidth={2} />
-                    The original is holding up — no variant has significantly beaten it
-                </p>
-                <span className="text-[11px] font-medium text-sky-700 bg-sky-100 rounded-full px-2.5 py-1 tabular-nums">
-                    {verdict.confidence.toFixed(0)}% confidence
-                </span>
-            </div>
+            <BannerShell
+                tone={{ border: "border-sky-200", bg: "bg-sky-50", chip: "bg-sky-100 text-sky-600", title: "text-sky-900" }}
+                icon={LuShield}
+                title="The original is holding up"
+                subtitle="No variant has significantly beaten it."
+                aside={confidenceChip("text-sky-700 bg-sky-100")}
+            />
         );
     }
 
-    // inconclusive: enough data, but the gap isn't distinguishable from noise.
-    // This is where a founder needs "how much longer?" most — they've cleared
-    // the sample gate and could otherwise wait forever on a gap that never
-    // resolves. Project time-to-significance from the observed lift.
+    // ── Inconclusive — past the gate, no winner ──────────────────────────────
+    // Where "how much longer?" matters most: the founder has cleared the sample
+    // gate and could otherwise wait forever on a gap that never resolves.
+    const tone: BannerTone = slow
+        ? { border: "border-rose-200", bg: "bg-rose-50", chip: "bg-rose-100 text-rose-600", title: "text-rose-900" }
+        : { border: "border-stone-200", bg: "bg-white", chip: "bg-stone-100 text-stone-500", title: "text-stone-800" };
     return (
-        <div
-            className={`flex flex-col gap-2 rounded-xl border px-4 py-3 ${
-                slow ? "border-rose-200 bg-rose-50" : "border-stone-200 bg-white"
-            }`}
-        >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-medium text-stone-700 flex items-center gap-2">
-                    <LuSearch className="size-4 text-stone-400" strokeWidth={2} />
-                    No clear winner yet — the difference isn&apos;t statistically significant
-                </p>
-                <span className="text-[11px] font-medium text-stone-500 bg-stone-100 rounded-full px-2.5 py-1 tabular-nums">
-                    {verdict.confidence.toFixed(0)}% confidence · need 95%
-                </span>
-            </div>
-            {pace !== null && pace.basis === "significance" && (
-                <p className={`text-xs leading-relaxed ${slow ? "text-rose-700" : "text-stone-500"}`}>
-                    {imminent ? (
-                        <>
-                            You&apos;re right at the threshold — if the {liftLabel} gap holds, this
-                            could resolve any day now.
-                        </>
-                    ) : (
-                        <>
-                            If the current {liftLabel} gap holds, you&apos;re on track for 95%
-                            confidence in{" "}
-                            <span className="font-medium">{fmtDuration(pace.daysRemaining)}</span>{" "}
-                            at ~{Math.round(pace.perDay).toLocaleString()} visitors/day per group.
-                        </>
-                    )}
-                    {slow &&
-                        " That's a long way off — the gap may be too small to prove out here. Consider ending this test or trying a bolder change."}
-                </p>
+        <BannerShell
+            tone={tone}
+            icon={LuSearch}
+            title="No clear winner yet"
+            subtitle="The difference isn't statistically significant."
+            aside={confidenceChip(
+                slow ? "text-rose-700 bg-rose-100" : "text-stone-500 bg-stone-100",
+                " · need 95%"
             )}
-        </div>
+        >
+            {/* {pace !== null && pace.basis === "significance" && (
+                <EstimateStrip
+                    tone={slow ? WARN_STRIP : CALM_STRIP}
+                    label="Est. to 95% confidence"
+                    value={imminent ? "Any run" : fmtDuration(pace.daysRemaining)}
+                    detail={
+                        imminent ? (
+                            <>If the {liftLabel} gap holds, this could resolve on the next daily check.</>
+                        ) : slow ? (
+                            <>
+                                If the {liftLabel} gap holds, at ~{perDay}/day per group. The gap may be
+                                too small to prove out — consider ending this test or a bolder change.
+                            </>
+                        ) : (
+                            <>If the current {liftLabel} gap holds, at ~{perDay} visitors/day per group.</>
+                        )
+                    }
+                />
+            )} */}
+        </BannerShell>
     );
 }
 
@@ -529,6 +675,9 @@ export default function IndividualExperimentPage() {
     const [busy, setBusy] = useState(false);
     const [actionError, setActionError] = useState<string | null>(null);
     const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+    // Folded timeline groups the founder has clicked open (keyed by the
+    // group's newest action id).
+    const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
     const statusMenuRef = useRef<HTMLDivElement>(null);
 
     const load = useCallback(async () => {
@@ -1181,100 +1330,213 @@ export default function IndividualExperimentPage() {
             {actionError && <p className="text-xs text-red-600">{actionError}</p>}
 
             {/* ── Agent activity ─────────────────────────────────────────── */}
-            <div className="flex flex-col gap-4">
-                <h2 className="one-title font-medium tracking-tight text-stone-800 truncate">
-                    Agent Activity & Timeline
-                </h2>
+            <div className="flex flex-col from-stone-100 to-white to-65% bg-linear-to-t rounded-b-2xl rounded-t-lg gap-4 px-6 pb-6">
+                <div className="flex flex-wrap items-end justify-between gap-2">
+                    <div>
+                        <h2 className="one-title font-medium tracking-tight text-stone-800 truncate">
+                            Agent Activity & Timeline
+                        </h2>
+                        <p className="text-xs text-stone-400 mt-0.5">
+                            Every decision your agent makes about this experiment, logged.
+                        </p>
+                    </div>
+                    {experiment.status === "running" && (
+                        <p className="text-[11px] text-stone-400 pb-1">
+                            Checks daily at 9:00 UTC · next in{" "}
+                            <span className="font-robot font-medium text-stone-600">{untilNextRun()}</span>
+                        </p>
+                    )}
+                </div>
                 {actions.length === 0 ? (
                     <p className="text-xs text-stone-400 leading-relaxed bg-stone-50 border border-dashed border-stone-200 rounded-xl p-4">
                         No evaluations yet — your agent checks running experiments daily at 9:00 UTC
                         and its decisions will show up here.
                     </p>
                 ) : (
-                    <div className="bg-white border border-stone-200 rounded-2xl shadow-xs overflow-hidden">
+                    <div className="bg-white border border-stone-200 rounded-xl shadow-xs overflow-hidden">
                         <div className="overflow-x-auto">
                             <table className="w-full text-left border-collapse">
                                 <thead>
-                                    <tr className="bg-stone-50 border-b border-stone-200">
-                                        <th className="text-[11px] font-medium uppercase tracking-wider text-stone-400 px-5 py-3">
+                                    <tr className="border-b border-stone-200">
+                                        <th className="text-[11px] font-medium uppercase tracking-wider text-stone-400 px-5 py-3 w-64">
                                             Action
                                         </th>
                                         <th className="text-[11px] font-medium uppercase tracking-wider text-stone-400 px-4 py-3">
                                             What happened
                                         </th>
-                                        <th className="text-[11px] font-medium uppercase tracking-wider text-stone-400 px-4 py-3 text-right">
+                                        <th className="text-[11px] font-medium uppercase tracking-wider text-stone-400 px-4 py-3 text-right w-24">
                                             Visitors
                                         </th>
-                                        <th className="text-[11px] font-medium uppercase tracking-wider text-stone-400 px-4 py-3">
+                                        <th className="text-[11px] font-medium uppercase tracking-wider text-stone-400 px-4 py-3 w-48">
                                             Outcome
                                         </th>
-                                        <th className="text-[11px] font-medium uppercase tracking-wider text-stone-400 px-5 py-3 text-right">
+                                        <th className="text-[11px] font-medium uppercase tracking-wider text-stone-400 px-5 py-3 text-right w-36">
                                             When
                                         </th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-stone-100">
-                                    {actions.map((action) => {
-                                        const meta = agentActionMeta(action);
+                                    {(() => {
+                                        const groups = groupActions(actions);
+                                        const firstOldIdx = groups.findIndex((g) => !g.recent);
+                                        return groups.map((group, groupIdx) => {
+                                        const face = group.items[0]; // newest of the run
+                                        const oldest = group.items[group.items.length - 1];
+                                        const folded = group.items.length > 1;
+                                        const open = expandedGroups.has(face.id);
+                                        const meta = agentActionMeta(face);
                                         const Icon = meta.icon;
-                                        const summary = agentActionSummary(action);
-                                        const d = (action.detail ?? {}) as Record<string, unknown>;
+                                        const summary = agentActionSummary(face);
+                                        const d = (face.detail ?? {}) as Record<string, unknown>;
                                         const stats = Array.isArray(d.stats)
                                             ? (d.stats as { exposures?: number }[])
                                             : null;
                                         const visitors = stats
                                             ? stats.reduce((sum, s) => sum + (s.exposures ?? 0), 0)
                                             : null;
+                                        const toggle = () => {
+                                            if (!folded) return;
+                                            setExpandedGroups((prev) => {
+                                                const next = new Set(prev);
+                                                if (next.has(face.id)) next.delete(face.id);
+                                                else next.add(face.id);
+                                                return next;
+                                            });
+                                        };
                                         return (
-                                            <tr
-                                                key={action.id}
-                                                className="hover:bg-stone-50/60 transition-colors"
-                                            >
-                                                {/* Action: icon chip + title */}
-                                                <td className="px-5 py-3.5 whitespace-nowrap">
-                                                    <div className="flex items-center gap-3">
-                                                        <div
-                                                            className={`size-8 rounded-lg flex items-center justify-center shrink-0 ${meta.tone}`}
-                                                        >
-                                                            <Icon className="size-4" strokeWidth={2} />
-                                                        </div>
-                                                        <span className="text-sm font-medium text-stone-800">
-                                                            {meta.title}
-                                                        </span>
-                                                    </div>
-                                                </td>
-                                                {/* What happened: the plain-English summary */}
-                                                <td className="px-4 py-3.5 min-w-64 max-w-md">
-                                                    <p className="text-xs text-stone-500 leading-relaxed line-clamp-2">
-                                                        {summary.includes(" — ")
-                                                            ? summary.split(" — ").slice(1).join(" — ")
-                                                            : summary}
-                                                    </p>
-                                                </td>
-                                                {/* Visitors seen at evaluation time */}
-                                                <td className="px-4 py-3.5 text-right whitespace-nowrap">
-                                                    {visitors !== null ? (
-                                                        <span className="text-sm font-robot font-medium text-stone-700 tabular-nums">
-                                                            {visitors.toLocaleString()}
-                                                        </span>
-                                                    ) : (
-                                                        <span className="text-stone-300">—</span>
-                                                    )}
-                                                </td>
-                                                {/* Outcome chip / decision progress */}
-                                                <td className="px-4 py-3.5 whitespace-nowrap">
-                                                    {actionOutcome(action)}
-                                                </td>
-                                                {/* When (hover for the exact date) */}
-                                                <td
-                                                    className="px-5 py-3.5 text-right whitespace-nowrap text-xs text-stone-400"
-                                                    title={new Date(action.created_at).toLocaleString()}
+                                            <Fragment key={face.id}>
+                                                {/* boundary between live detail and folded history */}
+                                                {groupIdx === firstOldIdx && firstOldIdx > 0 && (
+                                                    <tr className="bg-stone-50/70">
+                                                        <td colSpan={5} className="px-5 py-1.5">
+                                                            <span className="text-[10px] font-medium uppercase tracking-wider text-stone-400">
+                                                                Earlier
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                                <tr
+                                                    onClick={toggle}
+                                                    className={`transition-colors ${
+                                                        folded
+                                                            ? "cursor-pointer hover:bg-stone-50"
+                                                            : "hover:bg-stone-50/60"
+                                                    }`}
                                                 >
-                                                    {fmtRelative(action.created_at)}
-                                                </td>
-                                            </tr>
+                                                    {/* Action: icon chip + title (+ fold count) */}
+                                                    <td className="px-5 py-3.5 whitespace-nowrap">
+                                                        <div className="flex items-center gap-3">
+                                                            <div
+                                                                className={`size-8 rounded-lg flex items-center justify-center shrink-0 ${meta.tone}`}
+                                                            >
+                                                                <Icon className="size-4" strokeWidth={2} />
+                                                            </div>
+                                                            <span className="text-sm font-medium text-stone-800">
+                                                                {meta.title}
+                                                            </span>
+                                                            {folded && (
+                                                                <span className="text-[10px] font-medium font-robot text-stone-500 bg-stone-100 border border-stone-200 rounded-full px-1.5 py-0.5">
+                                                                    ×{group.items.length}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                    {/* What happened */}
+                                                    <td className="px-4 py-3.5 min-w-64 max-w-md">
+                                                        <p className="text-xs text-stone-500 leading-relaxed line-clamp-2">
+                                                            {sentence(
+                                                                summary.includes(" — ")
+                                                                    ? summary.split(" — ").slice(1).join(" — ")
+                                                                    : summary
+                                                            )}
+                                                        </p>
+                                                    </td>
+                                                    {/* Visitors at the latest check */}
+                                                    <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                                                        {visitors !== null ? (
+                                                            <span className="text-sm font-robot font-medium text-stone-700 tabular-nums">
+                                                                {visitors.toLocaleString()}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-stone-300">—</span>
+                                                        )}
+                                                    </td>
+                                                    {/* Outcome chip / decision progress */}
+                                                    <td className="px-4 py-3.5 whitespace-nowrap">
+                                                        {actionOutcome(face)}
+                                                    </td>
+                                                    {/* When: newest, plus the folded span */}
+                                                    <td
+                                                        className="px-5 py-3.5 text-right whitespace-nowrap"
+                                                        title={new Date(face.created_at).toLocaleString()}
+                                                    >
+                                                        <div className="flex items-center justify-end gap-1.5 text-xs text-stone-400">
+                                                            <div className="text-right">
+                                                                <p>{fmtRelative(face.created_at)}</p>
+                                                                {folded && (
+                                                                    <p className="text-[10px] text-stone-300 mt-0.5">
+                                                                        since {fmtDate(oldest.created_at)}
+                                                                    </p>
+                                                                )}
+                                                            </div>
+                                                            {folded && (
+                                                                <LuChevronDown
+                                                                    className={`size-3.5 text-stone-300 transition-transform ${open ? "rotate-180" : ""}`}
+                                                                />
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                                {/* Unfolded members: every check in the run */}
+                                                {folded &&
+                                                    open &&
+                                                    group.items.map((item, i) => {
+                                                        const id = (item.detail ?? {}) as Record<string, unknown>;
+                                                        const istats = Array.isArray(id.stats)
+                                                            ? (id.stats as { exposures?: number }[])
+                                                            : null;
+                                                        const iv = istats
+                                                            ? istats.reduce((sum, s) => sum + (s.exposures ?? 0), 0)
+                                                            : null;
+                                                        return (
+                                                            <tr key={item.id} className="bg-stone-50/50">
+                                                                <td className="px-5 py-2 whitespace-nowrap">
+                                                                    <div className="flex items-center gap-3">
+                                                                        {/* connector dot aligned under the icon chip */}
+                                                                        <span className="size-8 flex items-center justify-center shrink-0">
+                                                                            <span
+                                                                                className={`size-1.5 rounded-full ${i === group.items.length - 1 ? "bg-stone-300" : "bg-stone-200"}`}
+                                                                            />
+                                                                        </span>
+                                                                        <span className="text-xs text-stone-400">
+                                                                            Check #{group.items.length - i}
+                                                                        </span>
+                                                                    </div>
+                                                                </td>
+                                                                <td className="px-4 py-2" />
+                                                                <td className="px-4 py-2 text-right whitespace-nowrap">
+                                                                    {iv !== null && (
+                                                                        <span className="text-xs font-robot text-stone-500 tabular-nums">
+                                                                            {iv.toLocaleString()}
+                                                                        </span>
+                                                                    )}
+                                                                </td>
+                                                                <td className="px-4 py-2 whitespace-nowrap">
+                                                                    {actionOutcome(item)}
+                                                                </td>
+                                                                <td
+                                                                    className="px-5 py-2 text-right whitespace-nowrap text-[11px] text-stone-400"
+                                                                    title={new Date(item.created_at).toLocaleString()}
+                                                                >
+                                                                    {fmtDate(item.created_at)}
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                            </Fragment>
                                         );
-                                    })}
+                                        });
+                                    })()}
                                 </tbody>
                             </table>
                         </div>

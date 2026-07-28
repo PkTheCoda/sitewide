@@ -4,10 +4,10 @@ import { createClient } from "@supabase/supabase-js";
 const BROWSERLESS_URL = "https://chrome.browserless.io";
 const VIEWPORT = { width: 1440, height: 900 };
 
-// Sonnet 5 by default; set ANALYZE_MODEL=claude-opus-4-8 when the quality of
-// this call matters more than its cost — the analysis is the founder's first
-// impression of the product.
-const ANALYZE_MODEL = Deno.env.get("ANALYZE_MODEL") ?? "claude-haiku-4-5";
+// Opus 4.8 by default — the analysis is the founder's first impression of the
+// product, so quality wins over cost here. Set ANALYZE_MODEL to override (e.g.
+// claude-haiku-4-5 for cheap dev runs).
+const ANALYZE_MODEL = Deno.env.get("ANALYZE_MODEL") ?? "claude-opus-4-8";
 
 // What Claude must return. Structured outputs guarantee this exact shape —
 // no JSON-escaping prompt rules, no markdown fences to strip. Same pattern

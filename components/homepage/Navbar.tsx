@@ -55,12 +55,12 @@ export default function Navbar() {
 
             <div className="flex items-center gap-2">
                 <Link
-                    href="/signup"
+                    href="/signin"
                     className="h-max px-4 py-2 rounded-r-2xl rounded-l-md flex items-center gap-2 bg-orange-600 hover:bg-orange-600 text-white shadow"
                     aria-label="Sign Up"
                 >
                     <h4 className="text-sm font-medium">
-                        Book a Demo
+                        Create an Account
                     </h4>
                     <IoIosArrowRoundForward className="size-6"/>
                 </Link>

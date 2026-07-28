@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
     activateExperiment,
     deleteExperiment,
@@ -13,15 +14,65 @@ import {
 import { AgentAction, Experiment, ExperimentVariant, VariantPayload } from "@/lib/types";
 import { buildPreviewLink } from "@/lib/preview";
 import { agentActionSummary } from "@/lib/agentSummary";
-import StatusBadge from "./StatusBadge";
 import SnippetInstructions from "./SnippetInstructions";
-import { LuChevronDown, LuChevronUp } from "react-icons/lu";
+import {
+    LuArchive,
+    LuArrowRight,
+    LuChevronDown,
+    LuFileText,
+    LuFlag,
+    LuGlobe,
+    LuMousePointerClick,
+    LuPause,
+    LuPlay,
+    LuSparkles,
+    LuTrophy,
+} from "react-icons/lu";
+import { IconType } from "react-icons";
 
 const CHANGE_LABEL: Record<string, string> = {
     text: "Text",
     style: "Style",
     hide: "Hide",
     image: "Image",
+};
+
+// Leading icon chip + pill tones per status, in the same visual language as the
+// detail page's icon chips (colored square + matching soft badge).
+const STATUS_META: Record<
+    string,
+    { label: string; icon: IconType; chip: string; badge: string }
+> = {
+    running: {
+        label: "Running",
+        icon: LuPlay,
+        chip: "bg-emerald-100 text-emerald-600",
+        badge: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    },
+    paused: {
+        label: "Paused",
+        icon: LuPause,
+        chip: "bg-amber-100 text-amber-600",
+        badge: "bg-amber-50 text-amber-700 border-amber-200",
+    },
+    draft: {
+        label: "Draft",
+        icon: LuFileText,
+        chip: "bg-sky-100 text-sky-600",
+        badge: "bg-sky-50 text-sky-700 border-sky-200",
+    },
+    completed: {
+        label: "Completed",
+        icon: LuTrophy,
+        chip: "bg-emerald-100 text-emerald-600",
+        badge: "bg-sky-50 text-sky-700 border-sky-200",
+    },
+    archived: {
+        label: "Archived",
+        icon: LuArchive,
+        chip: "bg-stone-100 text-stone-500",
+        badge: "bg-stone-100 text-stone-500 border-stone-200",
+    },
 };
 
 function payloadSummary(payload: VariantPayload): string {
@@ -45,9 +96,9 @@ type Props = {
 };
 
 // One collapsible row in the Experiments section.
-// Collapsed: name + status + one-line summary.
-// Expanded:  hypothesis, per-variant live results, and lifecycle actions
-//            (Activate/Resume for drafts+paused, Pause for running).
+// Collapsed: status icon chip + name + status/agent badges + one-line meta.
+// Expanded:  hypothesis, per-variant live results, agent activity, lifecycle
+//            actions, and a clear link into the full experiment page.
 // Variants and events are fetched lazily on first expand — the list stays
 // cheap no matter how many experiments exist.
 export default function ExperimentCard({ experiment, onChanged }: Props) {
@@ -68,10 +119,9 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
         /* show raw url */
     }
 
-    const goalLabel =
-        experiment.goal_type === "click"
-            ? "Goal: click on target element"
-            : `Goal: visit ${experiment.goal_page_path}`;
+    const status = STATUS_META[experiment.status] ?? STATUS_META.draft;
+    const StatusIcon = status.icon;
+    const detailHref = `/dashboard/experiments/${experiment.id}`;
 
     async function toggleExpand() {
         const next = !expanded;
@@ -158,41 +208,86 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
     }
 
     return (
-        <div className="bg-white border border-stone-200 rounded-xl shadow-xs overflow-hidden">
-            {/* header row */}
-            <button
+        <div className="group bg-white border border-stone-200 rounded-xl shadow-xs overflow-hidden transition-colors hover:border-stone-300">
+            {/* header row — click anywhere to expand; the title + open links
+                stop propagation so they navigate instead of toggling */}
+            <div
                 onClick={toggleExpand}
-                className="w-full flex items-center gap-3 p-4 text-left hover:bg-stone-50 transition-colors"
+                className="flex items-center gap-3.5 p-3.5 cursor-pointer hover:bg-stone-50/70 transition-colors"
             >
+                <div
+                    className={`size-10 rounded-lg flex items-center justify-center shrink-0 ${status.chip}`}
+                >
+                    <StatusIcon className="size-[18px]" strokeWidth={2} />
+                </div>
+
                 <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-medium text-stone-800 truncate">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <Link
+                            href={detailHref}
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-sm font-semibold text-stone-800 truncate hover:text-orange-600 transition-colors"
+                        >
                             {experiment.name}
-                        </h3>
-                        <StatusBadge status={experiment.status} />
+                        </Link>
+                        <span
+                            className={`inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-full border ${status.badge}`}
+                        >
+                            {status.label}
+                        </span>
                         {experiment.created_by === "agent" && (
-                            <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-2 py-0.5">
-                                ✨ Agent proposal
+                            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-2 py-0.5">
+                                <LuSparkles className="size-2.5" />
+                                Agent proposal
                             </span>
                         )}
                     </div>
-                    <p className="text-xs text-stone-500 mt-0.5 truncate">
-                        {pagePath} · {CHANGE_LABEL[experiment.change_type] ?? experiment.change_type} test
-                        · {goalLabel}
-                    </p>
+                    <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[11px] text-stone-500 mt-1">
+                        <span className="flex items-center gap-1 min-w-0">
+                            <LuGlobe className="size-3 shrink-0 text-stone-400" />
+                            <span className="truncate">{pagePath}</span>
+                        </span>
+                        <span className="flex items-center gap-1">
+                            <span className="font-robot text-orange-600 font-semibold">
+                                {CHANGE_LABEL[experiment.change_type] ?? experiment.change_type}
+                            </span>
+                            test
+                        </span>
+                        <span className="flex items-center gap-1">
+                            {experiment.goal_type === "click" ? (
+                                <LuMousePointerClick className="size-3 shrink-0 text-stone-400" />
+                            ) : (
+                                <LuFlag className="size-3 shrink-0 text-stone-400" />
+                            )}
+                            {experiment.goal_type === "click"
+                                ? "Click goal"
+                                : `Visit ${experiment.goal_page_path}`}
+                        </span>
+                    </div>
                 </div>
-                <span className="text-[11px] text-stone-400 shrink-0">
+
+                <span className="text-[11px] text-stone-400 shrink-0 hidden sm:block font-robot tabular-nums">
                     {new Date(experiment.created_at).toLocaleDateString()}
                 </span>
-                {expanded ? (
-                    <LuChevronUp className="size-4 text-stone-400 shrink-0" />
-                ) : (
-                    <LuChevronDown className="size-4 text-stone-400 shrink-0" />
-                )}
-            </button>
+
+                <Link
+                    href={detailHref}
+                    onClick={(e) => e.stopPropagation()}
+                    className="shrink-0 hidden sm:inline-flex items-center gap-1 text-xs font-medium text-stone-600 bg-stone-100 hover:bg-orange-100 hover:text-orange-700 rounded-lg px-3 py-1.5 transition-colors"
+                >
+                    Open
+                    <LuArrowRight className="size-3" />
+                </Link>
+
+                <LuChevronDown
+                    className={`size-4 text-stone-400 shrink-0 transition-transform ${
+                        expanded ? "rotate-180" : ""
+                    }`}
+                />
+            </div>
 
             {expanded && (
-                <div className="border-t border-stone-200 p-4 flex flex-col gap-4">
+                <div className="border-t border-stone-200 p-4 flex flex-col gap-4 bg-stone-50/40">
                     {experiment.agent_rationale && (
                         <p className="text-xs text-violet-900 leading-relaxed bg-violet-50 border border-violet-200 rounded-lg p-3">
                             <span className="font-medium">Why your agent proposed this: </span>
@@ -200,7 +295,7 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
                         </p>
                     )}
                     {experiment.hypothesis && (
-                        <p className="text-xs text-stone-600 leading-relaxed bg-stone-50 border border-stone-200 rounded-lg p-3">
+                        <p className="text-xs text-stone-600 leading-relaxed bg-white border border-stone-200 rounded-lg p-3">
                             <span className="font-medium text-stone-700">Hypothesis: </span>
                             {experiment.hypothesis}
                         </p>
@@ -226,43 +321,62 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
                                 return (
                                     <div
                                         key={variant.id}
-                                        className={`flex items-center gap-3 rounded-lg border p-3 ${
+                                        className={`flex flex-col gap-2 rounded-lg border p-3 ${
                                             isWinner
                                                 ? "border-emerald-300 bg-emerald-50"
                                                 : "border-stone-200 bg-white"
                                         }`}
                                     >
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-xs font-medium text-stone-700">
-                                                {variant.name}
-                                                {variant.is_control && (
-                                                    <span className="text-stone-400 font-normal"> · original</span>
+                                        <div className="flex items-start gap-3">
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-xs font-medium text-stone-700 flex items-center gap-1.5">
+                                                    {variant.name}
+                                                    {variant.is_control && (
+                                                        <span className="text-stone-400 font-normal">
+                                                            · original
+                                                        </span>
+                                                    )}
+                                                    {isWinner && (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">
+                                                            <LuTrophy className="size-2.5" /> Winner
+                                                        </span>
+                                                    )}
+                                                </p>
+                                                <p className="text-[11px] text-stone-500 truncate mt-0.5">
+                                                    {payloadSummary(variant.payload)}
+                                                </p>
+                                                {previewUrl && (
+                                                    <a
+                                                        href={previewUrl}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        className="inline-block text-[11px] text-orange-600 hover:text-orange-700 mt-1 transition-colors"
+                                                    >
+                                                        Preview on your site ↗
+                                                    </a>
                                                 )}
-                                                {isWinner && (
-                                                    <span className="text-emerald-700"> · winner 🏆</span>
-                                                )}
-                                            </p>
-                                            <p className="text-[11px] text-stone-500 truncate mt-0.5">
-                                                {payloadSummary(variant.payload)}
-                                            </p>
-                                            {previewUrl && (
-                                                <a
-                                                    href={previewUrl}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    className="inline-block text-[11px] text-orange-600 hover:text-orange-700 mt-1 transition-colors"
-                                                >
-                                                    Preview on your site ↗
-                                                </a>
-                                            )}
+                                            </div>
+                                            <div className="text-right shrink-0">
+                                                <p className="text-sm font-semibold text-stone-800 tabular-nums font-robot">
+                                                    {rate.toFixed(1)}%
+                                                </p>
+                                                <p className="text-[11px] text-stone-400 tabular-nums">
+                                                    {c.conversions}/{c.exposures} visitors
+                                                </p>
+                                            </div>
                                         </div>
-                                        <div className="text-right shrink-0">
-                                            <p className="text-xs font-medium text-stone-700">
-                                                {rate.toFixed(1)}%
-                                            </p>
-                                            <p className="text-[11px] text-stone-400">
-                                                {c.conversions}/{c.exposures} visitors
-                                            </p>
+                                        {/* rate bar for a quick visual read */}
+                                        <div className="h-1.5 bg-stone-100 rounded-full overflow-hidden">
+                                            <div
+                                                className={`h-full rounded-full ${
+                                                    isWinner ? "bg-emerald-500" : "bg-stone-300"
+                                                }`}
+                                                style={{
+                                                    width: `${Math.min(100, Math.max(rate === 0 ? 0 : 2, rate))}%`,
+                                                    opacity: rate === 0 ? 0.25 : 1,
+                                                }}
+                                            />
                                         </div>
                                     </div>
                                 );
@@ -270,8 +384,8 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
                         )}
                     </div>
 
-                    {/* agent decision log — every evaluation the agent has run
-                        on this experiment, newest first, with its reasoning */}
+                    {/* agent decision log — most recent evaluations, with a link
+                        into the full timeline on the detail page */}
                     {variants !== null && (
                         <div className="flex flex-col gap-1.5">
                             <p className="text-[10px] uppercase tracking-wider text-stone-400 font-medium">
@@ -280,22 +394,30 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
                             {actions === null || actions.length === 0 ? (
                                 <p className="text-[11px] text-stone-400 leading-relaxed">
                                     No evaluations yet — the agent checks running experiments
-                                    every Monday at 9:00 UTC.
+                                    daily at 9:00 UTC.
                                 </p>
                             ) : (
-                                actions.map((action) => (
+                                actions.slice(0, 3).map((action) => (
                                     <div
                                         key={action.id}
-                                        className="flex items-start justify-between gap-3 rounded-lg border border-stone-200 bg-stone-50 py-2 px-3"
+                                        className="flex items-start justify-between gap-3 rounded-lg border border-stone-200 bg-white py-2 px-3"
                                     >
                                         <p className="text-[11px] text-stone-600 leading-relaxed">
                                             {agentActionSummary(action)}
                                         </p>
-                                        <span className="text-[10px] text-stone-400 shrink-0 mt-0.5">
-                                            {new Date(action.created_at).toLocaleString()}
+                                        <span className="text-[10px] text-stone-400 shrink-0 mt-0.5 font-robot tabular-nums">
+                                            {new Date(action.created_at).toLocaleDateString()}
                                         </span>
                                     </div>
                                 ))
+                            )}
+                            {actions !== null && actions.length > 3 && (
+                                <Link
+                                    href={detailHref}
+                                    className="text-[11px] font-medium text-orange-600 hover:text-orange-700 transition-colors self-start"
+                                >
+                                    View all {actions.length} agent actions →
+                                </Link>
                             )}
                         </div>
                     )}
@@ -305,7 +427,7 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
                     {error && <p className="text-xs text-red-600">{error}</p>}
 
                     {/* actions */}
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                         {(experiment.status === "draft" || experiment.status === "paused") && (
                             <button
                                 onClick={handleActivate}
@@ -346,6 +468,14 @@ export default function ExperimentCard({ experiment, onChanged }: Props) {
                                 Finished — the winner is being served to all visitors.
                             </p>
                         )}
+
+                        <Link
+                            href={detailHref}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-orange-600 hover:text-orange-700 transition-colors"
+                        >
+                            Open full experiment
+                            <LuArrowRight className="size-3" />
+                        </Link>
 
                         {/* Permanent delete, right-aligned away from the primary
                             lifecycle actions so it's hard to hit by accident. */}
