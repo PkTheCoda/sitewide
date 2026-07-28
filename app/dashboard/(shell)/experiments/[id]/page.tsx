@@ -589,7 +589,7 @@ function SignificanceBanner({ verdict, pace }: { verdict: Verdict; pace: Pace | 
                 " · need 95%"
             )}
         >
-            {/* {pace !== null && pace.basis === "significance" && (
+            {pace !== null && pace.basis === "significance" && (
                 <EstimateStrip
                     tone={slow ? WARN_STRIP : CALM_STRIP}
                     label="Est. to 95% confidence"
@@ -607,7 +607,7 @@ function SignificanceBanner({ verdict, pace }: { verdict: Verdict; pace: Pace | 
                         )
                     }
                 />
-            )} */}
+            )}
         </BannerShell>
     );
 }

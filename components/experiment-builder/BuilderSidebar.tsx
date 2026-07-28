@@ -16,9 +16,9 @@ import VariantFields, { isValidImageUrl } from "./VariantFields";
 import GoalSection from "./GoalSection";
 import DecisionEstimator from "./DecisionEstimator";
 import PreviewLinks from "./PreviewLinks";
+import { Hint, Segmented, StepCard } from "./ui";
 import { buildPreviewLink } from "@/lib/preview";
-
-import gridPattern from "@/public/assets/grid-pattern-ES1.png"
+import { LuCheck, LuCircleAlert } from "react-icons/lu";
 
 import sidebarEmpty from "@/public/assets/sidebar-empty-state-graphic.svg"
 import Image from "next/image";
@@ -198,6 +198,40 @@ export default function BuilderSidebar({
         (goalType === "pageview" && goalPagePath.trim().startsWith("/"));
     const canSubmit = !!user && !!target && !!name.trim() && changeValid && goalValid && !submitting;
 
+    // ── Step status → progress meter, chips, and the "why is the button
+    //    disabled" hint. One source of truth for all three. ──────────────────
+    const steps = [
+        { done: !!target },
+        { done: !!target && changeValid },
+        { done: goalValid },
+        { done: !!target && !!name.trim() },
+    ];
+    const doneCount = steps.filter((s) => s.done).length;
+    const activeStep = steps.findIndex((s) => !s.done); // -1 when all done
+    const stepState = (idx: number): "done" | "active" | "idle" =>
+        steps[idx].done ? "done" : idx === activeStep ? "active" : "idle";
+
+    const missing: string[] = [];
+    if (!target) missing.push("select an element on the page");
+    else {
+        if (!changeValid)
+            missing.push(
+                changeType === "text"
+                    ? "write a variant that differs from the original"
+                    : changeType === "style"
+                      ? "set at least one style change"
+                      : "paste a valid image URL"
+            );
+        if (!goalValid)
+            missing.push(
+                goalType === "click"
+                    ? "pick the element that counts as a conversion"
+                    : "enter a goal path starting with /"
+            );
+        if (!name.trim()) missing.push("give the experiment a name");
+    }
+    const nextMissing = missing[0] ?? null;
+
     async function handleSubmit() {
         if (!canSubmit || !user || !target) return;
         setSubmitting(true);
@@ -244,35 +278,40 @@ export default function BuilderSidebar({
     // ── Success state ──────────────────────────────────────────────────────
     if (createdId) {
         return (
-            <aside className="sticky top-0 h-screen w-[380px] shrink-0 border-r border-slate-200 bg-white flex flex-col items-center justify-center gap-4 p-8">
-                <div className="size-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 text-xl">
-                    ✓
+            <aside className="sticky top-0 h-screen w-95 shrink-0 border-r border-stone-200 bg-stone-50 flex flex-col items-center justify-center gap-4 p-6">
+                <div className="size-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
+                    <LuCheck className="size-6" strokeWidth={2.5} />
                 </div>
                 <div className="text-center">
-                    <h3 className="text-sm font-semibold text-slate-800">Experiment created</h3>
-                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    <h3 className="text-sm font-semibold tracking-tight text-stone-800">
+                        Experiment created
+                    </h3>
+                    <p className="text-xs text-stone-500 mt-1 leading-relaxed">
                         Saved as a draft. It starts running once your snippet is installed
                         and the experiment is activated.
                     </p>
                 </div>
                 {previewLinks.length > 0 && (
-                    <div className="w-full flex flex-col gap-1.5">
-                        <p className="text-[11px] text-slate-400 leading-relaxed">
-                            Preview the variants on your live site (or share the links):
-                        </p>
+                    <div className="w-full bg-white border border-stone-200 rounded-xl shadow-xs p-3 flex flex-col gap-2">
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-medium uppercase tracking-wider text-stone-400">
+                                Live preview
+                            </span>
+                            <Hint text="Each link opens your live page with that variant applied — nothing is recorded. Share them with your cofounder." />
+                        </div>
                         <PreviewLinks links={previewLinks} />
                     </div>
                 )}
-                <div className="flex flex-col gap-2 w-full mt-2">
+                <div className="flex flex-col gap-3 w-full mt-2">
                     <button
                         onClick={resetForm}
-                        className="text-xs font-medium text-white bg-orange-600 hover:bg-orange-700 rounded-md py-2.5 transition-colors"
+                        className="cursor-pointer text-xs font-semibold text-white bg-orange-600 hover:bg-orange-700 rounded-lg py-2.5 transition-colors drop-shadow-[0px_4px_0px_rgba(194,65,12,1)]"
                     >
                         Create another experiment
                     </button>
                     <Link
                         href={`/dashboard/report/${report.id}`}
-                        className="text-xs text-center text-slate-500 hover:text-slate-700 py-2 transition-colors"
+                        className="text-xs text-center text-stone-500 hover:text-stone-700 py-1 transition-colors"
                     >
                         Back to report
                     </Link>
@@ -283,163 +322,188 @@ export default function BuilderSidebar({
 
     // ── Builder form ───────────────────────────────────────────────────────
     return (
-        <aside className="sticky top-0 h-screen w-[380px] shrink-0 border-r border-slate-200 bg-white flex flex-col">
-            <div className="p-5 border-b border-slate-200">
-                <h2 className="text-sm font-semibold text-slate-800">New experiment</h2>
-                <p className="text-xs text-slate-500 mt-1 truncate">{report.url}</p>
+        <aside className="sticky top-0 h-screen w-95 shrink-0 border-r border-stone-200 bg-stone-50 flex flex-col">
+            {/* Header: what + where + how far along */}
+            <div className="bg-white px-5 py-4 border-b border-stone-200 flex flex-col gap-2.5">
+                <div className="min-w-0">
+                    <h2 className="text-sm font-semibold tracking-tight text-stone-800">
+                        New experiment
+                    </h2>
+                    <p className="text-xs text-stone-400 mt-0.5 truncate">{report.url}</p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                    {steps.map((step, i) => (
+                        <span
+                            key={i}
+                            className={`h-1 flex-1 rounded-full transition-colors ${
+                                step.done ? "bg-orange-500" : "bg-stone-200"
+                            }`}
+                        />
+                    ))}
+                    <span className="text-[10px] font-robot font-semibold text-stone-400 tabular-nums ml-1">
+                        {doneCount}/4
+                    </span>
+                </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto flex flex-col gap-6 p-5">
+            {!target ? (
+                /* Empty state — nothing selected yet */
+                <div className="flex-1 flex flex-col items-center justify-center text-center gap-5 px-6">
+                    <Image src={sidebarEmpty} alt="" className="w-full h-auto" />
+                    <div className="flex flex-col gap-1.5">
+                        <h3 className="one-title tracking-tight font-medium text-stone-700">
+                            Pick an element to test
+                        </h3>
+                        <p className="text-xs text-stone-500 leading-relaxed">
+                            Hover the page preview and click the element you want to
+                            experiment on — a headline, a button, an image.
+                        </p>
+                    </div>
+                </div>
+            ) : (
+                <div className="flex-1 overflow-y-auto flex flex-col gap-3 p-4">
+                    {/* Step 1 — element */}
+                    <StepCard
+                        step={1}
+                        title="Element to test"
+                        state={stepState(0)}
+                        hint="Click any other element in the page preview to switch what you're testing."
+                    >
+                        <div className="flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-lg py-2 px-2.5">
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-orange-600 bg-orange-100 rounded px-1.5 py-0.5 shrink-0">
+                                {target.tag}
+                            </span>
+                            <p className="text-xs text-orange-900 truncate">
+                                {target.text ?? target.alt ?? "(no text)"}
+                            </p>
+                        </div>
+                    </StepCard>
 
-                {/* Step 1 — element */}
-                <section className="flex flex-col gap-2 items-center justify-center h-full">
-                    {target ? (
-                        <div className="w-full">
-                            <h4 className="uppercase text-slate-500 tracking-wider text-xs font-medium">
-                                1 · Element to test
-                            </h4>
-                            <div className="bg-orange-50 border border-orange-200 rounded-md py-2 px-3">
-                                <p className="text-xs text-orange-900 line-clamp-2">
-                                    <span className="font-semibold uppercase text-[10px] tracking-wider mr-1.5">
-                                        {target.tag}
+                    {/* Step 2 — change */}
+                    <StepCard
+                        step={2}
+                        title="What changes"
+                        state={stepState(1)}
+                        hint="This is the change visitors in the test group will see instead of the original."
+                    >
+                        <Segmented
+                            options={target.tag === "img" ? IMAGE_CHANGE_TYPES : TEXT_CHANGE_TYPES}
+                            value={changeType}
+                            onChange={setChangeType}
+                        />
+                        <VariantFields
+                            changeType={changeType}
+                            target={target}
+                            textVariants={textVariants}
+                            onTextVariantsChange={setTextVariants}
+                            partVariants={partVariants}
+                            onPartVariantsChange={setPartVariants}
+                            styles={styles}
+                            onStylesChange={setStyles}
+                            imageSrc={imageSrc}
+                            onImageSrcChange={setImageSrc}
+                        />
+                        {previewLinks.length > 0 && (
+                            <div className="flex flex-col gap-1.5 pt-2 border-t border-stone-100">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-[10px] font-medium uppercase tracking-wider text-stone-400">
+                                        Live preview
                                     </span>
-                                    {target.text ?? target.alt ?? "(no text)"}
-                                </p>
-                            </div>
-                        </div>
-                    ) : (
-                        <div
-                            className="w-full h-max flex flex-col items-center justify-center text-center px-2   gap-4"
-                        >
-                            <Image src={sidebarEmpty} alt="sidebar empty state" className="w-full h-full" />
-
-                            <div className="flex flex-col gap-2">
-                                <h3 className="text-slate-700 one-title tracking-tight font-medium">
-                                    No Element Selected
-                                </h3>
-                                <p className="text-xs text-slate-500">
-                                    Hover over the page and click the element that you would like to test for this experiment.
-                                </p>
-                            </div>
-
-                        </div>
-                    )}
-                </section>
-
-                {target && (
-                    <>
-                        {/* Step 2 — change */}
-                        <section className="flex flex-col gap-2">
-                            <h4 className="uppercase text-slate-500 tracking-wider text-xs font-medium">
-                                2 · What changes
-                            </h4>
-                            <div
-                                className={`grid gap-1 bg-slate-100 rounded-lg p-1 ${
-                                    target.tag === "img" ? "grid-cols-2" : "grid-cols-3"
-                                }`}
-                            >
-                                {(target.tag === "img" ? IMAGE_CHANGE_TYPES : TEXT_CHANGE_TYPES).map(
-                                    ({ value, label }) => (
-                                        <button
-                                            key={value}
-                                            type="button"
-                                            onClick={() => setChangeType(value)}
-                                            className={`text-xs py-1.5 rounded-md transition-colors ${
-                                                changeType === value
-                                                    ? "bg-white text-slate-800 font-medium shadow-sm"
-                                                    : "text-slate-500 hover:text-slate-700"
-                                            }`}
-                                        >
-                                            {label}
-                                        </button>
-                                    )
-                                )}
-                            </div>
-                            <VariantFields
-                                changeType={changeType}
-                                target={target}
-                                textVariants={textVariants}
-                                onTextVariantsChange={setTextVariants}
-                                partVariants={partVariants}
-                                onPartVariantsChange={setPartVariants}
-                                styles={styles}
-                                onStylesChange={setStyles}
-                                imageSrc={imageSrc}
-                                onImageSrcChange={setImageSrc}
-                            />
-                            {previewLinks.length > 0 && (
-                                <div className="flex flex-col gap-1.5 mt-1">
-                                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                                        See it before you commit — each link opens your live
-                                        page with that variant applied. Needs the Sitewide
-                                        snippet installed; records no data.
-                                    </p>
-                                    <PreviewLinks links={previewLinks} />
+                                    <Hint text="Each link opens your live page with that variant applied — nothing is recorded. Needs the Sitewide snippet installed on the page." />
                                 </div>
-                            )}
-                        </section>
+                                <PreviewLinks links={previewLinks} />
+                            </div>
+                        )}
+                    </StepCard>
 
-                        {/* Step 3 — goal */}
-                        <section className="flex flex-col gap-2">
-                            <h4 className="uppercase text-slate-500 tracking-wider text-xs font-medium">
-                                3 · Conversion goal
-                            </h4>
-                            <GoalSection
-                                goalType={goalType}
-                                onGoalTypeChange={(type) => {
-                                    setGoalType(type);
-                                    onCancelPickingGoal();
-                                }}
-                                goalElement={goalElement}
-                                pickingGoal={pickingGoal}
-                                onStartPicking={onStartPickingGoal}
-                                onCancelPicking={onCancelPickingGoal}
-                                goalPagePath={goalPagePath}
-                                onPathChange={setGoalPagePath}
-                            />
-                        </section>
+                    {/* Step 3 — goal */}
+                    <StepCard
+                        step={3}
+                        title="Conversion goal"
+                        state={stepState(2)}
+                        hint="The action that counts as a win — a click on your signup button, or reaching a page like /thank-you."
+                    >
+                        <GoalSection
+                            goalType={goalType}
+                            onGoalTypeChange={(type) => {
+                                setGoalType(type);
+                                onCancelPickingGoal();
+                            }}
+                            goalElement={goalElement}
+                            pickingGoal={pickingGoal}
+                            onStartPicking={onStartPickingGoal}
+                            onCancelPicking={onCancelPickingGoal}
+                            goalPagePath={goalPagePath}
+                            onPathChange={setGoalPagePath}
+                        />
+                    </StepCard>
 
-                        {/* Step 4 — details */}
-                        <section className="flex flex-col gap-2">
-                            <h4 className="uppercase text-slate-500 tracking-wider text-xs font-medium">
-                                4 · Details
-                            </h4>
+                    {/* Step 4 — details */}
+                    <StepCard step={4} title="Details" state={stepState(3)}>
+                        <label className="flex flex-col gap-1">
+                            <span className="text-[11px] text-stone-500">Name</span>
                             <input
                                 type="text"
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
                                 placeholder="Experiment name"
-                                className="text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-md py-2 px-3 focus:outline-none focus:border-orange-600 placeholder-slate-400"
+                                className="text-xs text-stone-700 bg-stone-50 border border-stone-200 rounded-lg py-2 px-3 focus:outline-none focus:border-orange-600 placeholder:text-stone-400"
                             />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                            <span className="text-[11px] text-stone-500">
+                                Hypothesis <span className="text-stone-300">· optional</span>
+                            </span>
                             <textarea
                                 value={hypothesis}
                                 onChange={(e) => setHypothesis(e.target.value)}
-                                placeholder="Hypothesis (optional) — e.g. 'A benefit-led headline will lift signups because…'"
-                                rows={3}
-                                className="text-xs text-slate-700 leading-relaxed bg-slate-50 border border-slate-200 rounded-md py-2 px-3 focus:outline-none focus:border-orange-600 placeholder-slate-400 resize-none"
+                                placeholder="e.g. A benefit-led headline will lift signups because…"
+                                rows={2}
+                                className="text-xs text-stone-700 leading-relaxed bg-stone-50 border border-stone-200 rounded-lg py-2 px-3 focus:outline-none focus:border-orange-600 placeholder:text-stone-400 resize-none"
                             />
-                        </section>
+                        </label>
+                    </StepCard>
 
-                        {/* Step 5 — time-to-decision reality check */}
+                    {/* Step 5 — time-to-decision reality check */}
+                    <StepCard
+                        step={5}
+                        title="Time to decision"
+                        state="idle"
+                        optional
+                        hint="Estimates how long this test needs based on your traffic — and sets the sample size your agent waits for before calling a result."
+                    >
                         <DecisionEstimator
                             groupCount={Math.max(variantPayloads.length, 1) + 1}
                             onSampleSize={setEstSampleSize}
                         />
-                    </>
-                )}
-            </div>
+                    </StepCard>
+                </div>
+            )}
 
-            <div className="p-5 border-t border-slate-200 flex flex-col gap-2">
+            {/* Footer — the CTA always says what it's waiting on */}
+            <div className="bg-white border-t border-stone-200 p-4 flex flex-col gap-2.5">
                 {submitError && (
-                    <p className="text-xs text-red-600 leading-relaxed">{submitError}</p>
+                    <p className="text-xs text-rose-600 leading-relaxed">{submitError}</p>
+                )}
+                {!canSubmit && !submitting && nextMissing && (
+                    <div className="flex items-center gap-2 text-[11px] text-stone-500">
+                        <LuCircleAlert className="size-3.5 text-amber-500 shrink-0" />
+                        <span>
+                            <span className="font-medium text-stone-600">Next:</span>{" "}
+                            {nextMissing}
+                        </span>
+                    </div>
                 )}
                 <button
                     onClick={handleSubmit}
                     disabled={!canSubmit}
-                    className="text-xs font-medium text-white bg-orange-600 hover:bg-orange-700 disabled:bg-slate-300 disabled:cursor-not-allowed rounded-md py-2.5 transition-colors"
+                    className="cursor-pointer text-xs font-semibold text-white bg-orange-600 hover:bg-orange-700 rounded-lg py-2.5 transition-colors drop-shadow-[0px_4px_0px_rgba(194,65,12,1)] disabled:bg-stone-200 disabled:text-stone-400 disabled:cursor-not-allowed disabled:drop-shadow-none"
                 >
-                    {submitting ? "Creating…" : "Create experiment (draft)"}
+                    {submitting ? "Creating…" : "Create experiment"}
                 </button>
+                <p className="text-[10px] text-stone-400 text-center mt-0.5">
+                    Saves as a draft — you activate it whenever you&apos;re ready.
+                </p>
             </div>
         </aside>
     );

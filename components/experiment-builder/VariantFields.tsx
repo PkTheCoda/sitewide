@@ -1,6 +1,8 @@
 "use client";
 
 import { ChangeType, PageElement, StyleChanges } from "@/lib/types";
+import { LuEyeOff, LuTriangleAlert, LuX } from "react-icons/lu";
+import { Hint } from "./ui";
 
 const MAX_VARIANTS = 3;
 
@@ -26,8 +28,8 @@ type Props = {
 // Step 2's body in the builder sidebar: renders the right inputs for the
 // selected change type. This component is pure UI — all state lives in
 // BuilderSidebar and flows down through props:
-//   text  → original copy + up to MAX_VARIANTS textareas (+ a warning when the
-//           element has styled children that a plain-text swap would flatten)
+//   text  → original copy + up to MAX_VARIANTS variant cards (+ a warning when
+//           the element has styled children that a plain-text swap would flatten)
 //   style → color / background / font-size (empty field = keep original)
 //   image → URL input + current-vs-new preview (founder hosts the image)
 //   hide  → no inputs, just an explainer
@@ -47,10 +49,13 @@ export default function VariantFields({
     const richParts = target.textParts && target.textParts.length > 1 ? target.textParts : null;
     if (changeType === "hide") {
         return (
-            <p className="text-xs text-slate-500 leading-relaxed bg-slate-50 border border-slate-200 rounded-md p-3">
-                Visitors in the variant group won&apos;t see this element. Useful for
-                testing whether a section is helping or hurting conversions.
-            </p>
+            <div className="flex items-start gap-2.5 bg-stone-50 border border-stone-200 rounded-lg p-3">
+                <LuEyeOff className="size-4 text-stone-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-stone-500 leading-relaxed">
+                    Visitors in the variant group won&apos;t see this element — a clean
+                    way to test whether a section helps or hurts.
+                </p>
+            </div>
         );
     }
 
@@ -60,38 +65,43 @@ export default function VariantFields({
             <div className="flex flex-col gap-3">
                 {target.src && (
                     <div className="flex flex-col gap-1">
-                        <span className="text-[11px] text-slate-400">Current image</span>
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-stone-400">
+                            Current image
+                        </span>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                             src={target.src}
                             alt="Current"
-                            className="max-h-28 w-auto self-start rounded-md border border-slate-200 bg-slate-50"
+                            className="max-h-28 w-auto self-start rounded-lg border border-stone-200 bg-stone-50"
                         />
                     </div>
                 )}
-                <input
-                    type="text"
-                    value={imageSrc}
-                    onChange={(e) => onImageSrcChange(e.target.value)}
-                    placeholder="https://yoursite.com/new-image.png"
-                    className="text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-md py-2 px-3 focus:outline-none focus:border-orange-600 placeholder-slate-400"
-                />
+                <label className="flex flex-col gap-1">
+                    <span className="flex items-center gap-1.5 text-[11px] text-stone-500">
+                        New image URL
+                        <Hint text="Host the image yourself (your site, a CDN…) and paste its link. Visitors in the variant group see it instead. Use the same dimensions as the original for best results." />
+                    </span>
+                    <input
+                        type="text"
+                        value={imageSrc}
+                        onChange={(e) => onImageSrcChange(e.target.value)}
+                        placeholder="https://yoursite.com/new-image.png"
+                        className="text-xs text-stone-700 bg-stone-50 border border-stone-200 rounded-lg py-2 px-3 focus:outline-none focus:border-orange-600 placeholder:text-stone-400"
+                    />
+                </label>
                 {validUrl && (
                     <div className="flex flex-col gap-1">
-                        <span className="text-[11px] text-slate-400">Variant image</span>
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-stone-400">
+                            Variant image
+                        </span>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                             src={imageSrc.trim()}
                             alt="Variant preview"
-                            className="max-h-28 w-auto self-start rounded-md border border-dashed border-orange-300 bg-slate-50"
+                            className="max-h-28 w-auto self-start rounded-lg border border-dashed border-orange-300 bg-stone-50"
                         />
                     </div>
                 )}
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Paste a link to an image you host (your site, a CDN…). Visitors in
-                    the variant group see it instead of the current image. For best
-                    results use the same dimensions as the original.
-                </p>
             </div>
         );
     }
@@ -112,18 +122,18 @@ export default function VariantFields({
                     }
                 />
                 <div className="flex items-center justify-between gap-3">
-                    <label className="text-xs text-slate-600">Font size</label>
+                    <label className="flex items-center gap-1.5 text-xs text-stone-600">
+                        Font size
+                        <Hint text="Any CSS size works — 24px, 1.5rem… Fields left empty keep the original value." />
+                    </label>
                     <input
                         type="text"
                         value={styles.fontSize ?? ""}
                         onChange={(e) => onStylesChange({ ...styles, fontSize: e.target.value || undefined })}
-                        placeholder="e.g. 24px"
-                        className="w-28 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-md py-1.5 px-2.5 focus:outline-none focus:border-orange-600 placeholder-slate-400"
+                        placeholder="unchanged"
+                        className="w-28 text-xs text-stone-700 bg-stone-50 border border-stone-200 rounded-lg py-1.5 px-2.5 focus:outline-none focus:border-orange-600 placeholder:text-stone-400"
                     />
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Leave a field empty to keep the original value.
-                </p>
             </div>
         );
     }
@@ -133,21 +143,51 @@ export default function VariantFields({
         return (
             <div className="flex flex-col gap-2">
                 {originalText && (
-                    <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 py-2 px-3 rounded-md border border-slate-200">
-                        {originalText}
-                    </p>
-                )}
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                    This element has {richParts.length} styled parts. Edit any of
-                    them — each part keeps its original styling (colors,
-                    gradients, links).
-                </p>
-                {partVariants.map((parts, idx) => (
-                    <div key={idx} className="flex items-start gap-2">
-                        <div className="flex-1 flex flex-col gap-1.5 bg-white py-2 px-3 rounded-md border border-dashed border-slate-300">
-                            <span className="text-[10px] uppercase tracking-wider text-slate-400 font-medium">
-                                Variant {String.fromCharCode(66 + idx)}
+                    <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-medium uppercase tracking-wider text-stone-400">
+                                Original
                             </span>
+                            <span className="text-[10px] font-robot text-stone-400 bg-stone-100 rounded-full px-1.5 py-px tabular-nums">
+                                {richParts.length} styled parts
+                            </span>
+                            <Hint
+                                text={`This element has ${richParts.length} separately-styled parts. Edit any of them — each part keeps its original styling (colors, gradients, links).`}
+                            />
+                        </div>
+                        <p className="text-xs text-stone-600 leading-relaxed bg-stone-50 py-2 px-3 rounded-lg border border-stone-200">
+                            {originalText}
+                        </p>
+                    </div>
+                )}
+                {partVariants.map((parts, idx) => {
+                    const unchanged =
+                        parts.map((p) => p.trim()).join(" ") ===
+                        richParts.map((p) => p.trim()).join(" ");
+                    return (
+                        <div
+                            key={idx}
+                            className="flex flex-col gap-1.5 bg-white py-2.5 px-3 rounded-lg border border-dashed border-stone-300"
+                        >
+                            <div className="flex items-center justify-between">
+                                <span className="text-[10px] uppercase tracking-wider text-stone-400 font-semibold">
+                                    Variant {String.fromCharCode(66 + idx)}
+                                </span>
+                                {partVariants.length > 1 && (
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            onPartVariantsChange(
+                                                partVariants.filter((_, i) => i !== idx)
+                                            )
+                                        }
+                                        className="text-stone-300 hover:text-rose-500 transition-colors cursor-pointer"
+                                        aria-label={`Remove variant ${idx + 1}`}
+                                    >
+                                        <LuX className="size-3.5" />
+                                    </button>
+                                )}
+                            </div>
                             {parts.map((part, p) => (
                                 <input
                                     key={p}
@@ -159,41 +199,35 @@ export default function VariantFields({
                                         onPartVariantsChange(next);
                                     }}
                                     placeholder={richParts[p]}
-                                    className={`text-xs leading-relaxed py-1.5 px-2.5 rounded-md border focus:outline-none focus:border-orange-600 placeholder-slate-400 transition-colors ${
+                                    className={`text-xs leading-relaxed py-1.5 px-2.5 rounded-md border focus:outline-none focus:border-orange-600 placeholder:text-stone-400 transition-colors ${
                                         part.trim() !== richParts[p]
                                             ? "text-orange-900 bg-orange-50 border-orange-200"
-                                            : "text-slate-700 bg-slate-50 border-slate-200"
+                                            : "text-stone-700 bg-stone-50 border-stone-200"
                                     }`}
                                 />
                             ))}
+                            {unchanged && (
+                                <p className="text-[10px] text-amber-600">
+                                    Edit at least one part — identical variants don&apos;t run.
+                                </p>
+                            )}
                         </div>
-                        {partVariants.length > 1 && (
-                            <button
-                                type="button"
-                                onClick={() =>
-                                    onPartVariantsChange(partVariants.filter((_, i) => i !== idx))
-                                }
-                                className="text-slate-300 hover:text-red-500 text-sm px-1 pt-2 transition-colors"
-                                aria-label={`Remove variant ${idx + 1}`}
-                            >
-                                ✕
-                            </button>
-                        )}
-                    </div>
-                ))}
+                    );
+                })}
                 {partVariants.length < MAX_VARIANTS && (
                     <button
                         type="button"
                         onClick={() => onPartVariantsChange([...partVariants, [...richParts]])}
-                        className="self-start text-xs text-slate-500 hover:text-orange-600 transition-colors"
+                        className="w-full text-[11px] font-medium text-stone-500 hover:text-orange-600 border border-dashed border-stone-300 hover:border-orange-300 rounded-lg py-2 transition-colors cursor-pointer"
                     >
                         + Add another variant
                     </button>
                 )}
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Variants that still match the original don&apos;t count — change
-                    at least one part. Each variant splits your traffic further.
-                </p>
+                {partVariants.length > 1 && (
+                    <p className="text-[10px] text-stone-400">
+                        Each extra variant splits traffic — decisions take longer.
+                    </p>
+                )}
             </div>
         );
     }
@@ -202,21 +236,47 @@ export default function VariantFields({
     return (
         <div className="flex flex-col gap-2">
             {originalText && (
-                <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 py-2 px-3 rounded-md border border-slate-200">
-                    {originalText}
-                </p>
+                <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-stone-400">
+                        Original
+                    </span>
+                    <p className="text-xs text-stone-600 leading-relaxed bg-stone-50 py-2 px-3 rounded-lg border border-stone-200">
+                        {originalText}
+                    </p>
+                </div>
             )}
             {target.hasMarkup && (
-                <p className="text-[11px] text-amber-800 leading-relaxed bg-amber-50 border border-amber-200 rounded-md py-2 px-3">
-                    This element contains styled parts inside it (like a colored word or
-                    a link). A text variant replaces everything as plain text, so that
-                    styling is lost. Re-run the analysis on this page to unlock
-                    part-by-part editing, or click the styled part itself and test
-                    just that piece.
-                </p>
+                <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg py-2 px-2.5">
+                    <LuTriangleAlert className="size-3.5 text-amber-500 shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                        This element has styled parts a plain-text swap would flatten.
+                        Re-run the analysis to unlock part-by-part editing, or select
+                        the styled part itself.
+                    </p>
+                </div>
             )}
             {textVariants.map((variant, idx) => (
-                <div key={idx} className="flex items-start gap-2">
+                <div
+                    key={idx}
+                    className="flex flex-col gap-1 bg-white py-2.5 px-3 rounded-lg border border-dashed border-stone-300 focus-within:border-solid focus-within:border-orange-400 transition-colors"
+                >
+                    <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase tracking-wider text-stone-400 font-semibold">
+                            Variant {String.fromCharCode(66 + idx)}
+                        </span>
+                        {textVariants.length > 1 && (
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    onTextVariantsChange(textVariants.filter((_, i) => i !== idx))
+                                }
+                                className="text-stone-300 hover:text-rose-500 transition-colors cursor-pointer"
+                                aria-label={`Remove variant ${idx + 1}`}
+                            >
+                                <LuX className="size-3.5" />
+                            </button>
+                        )}
+                    </div>
                     <textarea
                         value={variant}
                         onChange={(e) => {
@@ -224,35 +284,26 @@ export default function VariantFields({
                             next[idx] = e.target.value;
                             onTextVariantsChange(next);
                         }}
-                        placeholder={`Variant ${String.fromCharCode(66 + idx)} copy…`}
+                        placeholder="New copy for this variant…"
                         rows={2}
-                        className="flex-1 text-xs text-slate-700 leading-relaxed bg-white py-2 px-3 rounded-md border border-dashed border-slate-300 focus:outline-none focus:border-orange-600 focus:border-solid placeholder-slate-400 resize-none transition-colors"
+                        className="text-xs text-stone-700 leading-relaxed bg-transparent focus:outline-none placeholder:text-stone-400 resize-none"
                     />
-                    {textVariants.length > 1 && (
-                        <button
-                            type="button"
-                            onClick={() => onTextVariantsChange(textVariants.filter((_, i) => i !== idx))}
-                            className="text-slate-300 hover:text-red-500 text-sm px-1 pt-2 transition-colors"
-                            aria-label={`Remove variant ${idx + 1}`}
-                        >
-                            ✕
-                        </button>
-                    )}
                 </div>
             ))}
             {textVariants.length < MAX_VARIANTS && (
                 <button
                     type="button"
                     onClick={() => onTextVariantsChange([...textVariants, ""])}
-                    className="self-start text-xs text-slate-500 hover:text-orange-600 transition-colors"
+                    className="w-full text-[11px] font-medium text-stone-500 hover:text-orange-600 border border-dashed border-stone-300 hover:border-orange-300 rounded-lg py-2 transition-colors cursor-pointer"
                 >
                     + Add another variant
                 </button>
             )}
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-                Each variant splits your traffic further — more variants means the
-                test needs more visitors to reach a confident result.
-            </p>
+            {textVariants.length > 1 && (
+                <p className="text-[10px] text-stone-400">
+                    Each extra variant splits traffic — decisions take longer.
+                </p>
+            )}
         </div>
     );
 }
@@ -268,20 +319,20 @@ function StyleField({
 }) {
     return (
         <div className="flex items-center justify-between gap-3">
-            <label className="text-xs text-slate-600">{label}</label>
+            <label className="text-xs text-stone-600">{label}</label>
             <div className="flex items-center gap-2">
                 <input
                     type="color"
                     value={value || "#000000"}
                     onChange={(e) => onChange(e.target.value)}
-                    className="size-7 rounded border border-slate-200 cursor-pointer bg-white p-0.5"
+                    className="size-7 rounded-md border border-stone-200 cursor-pointer bg-white p-0.5"
                 />
                 <input
                     type="text"
                     value={value}
                     onChange={(e) => onChange(e.target.value)}
                     placeholder="unchanged"
-                    className="w-24 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-md py-1.5 px-2.5 focus:outline-none focus:border-orange-600 placeholder-slate-400"
+                    className="w-24 text-xs text-stone-700 bg-stone-50 border border-stone-200 rounded-lg py-1.5 px-2.5 focus:outline-none focus:border-orange-600 placeholder:text-stone-400"
                 />
             </div>
         </div>

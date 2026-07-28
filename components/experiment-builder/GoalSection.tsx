@@ -1,6 +1,8 @@
 "use client";
 
 import { GoalType, PageElement } from "@/lib/types";
+import { LuMousePointerClick } from "react-icons/lu";
+import { Segmented } from "./ui";
 
 type Props = {
     goalType: GoalType;
@@ -29,93 +31,71 @@ export default function GoalSection({
     onPathChange,
 }: Props) {
     return (
-        <div className="flex flex-col gap-3">
-            <div className="grid grid-cols-2 gap-1 bg-slate-100 rounded-lg p-1">
-                <GoalTab
-                    active={goalType === "click"}
-                    label="Element click"
-                    onClick={() => onGoalTypeChange("click")}
-                />
-                <GoalTab
-                    active={goalType === "pageview"}
-                    label="Page visit"
-                    onClick={() => onGoalTypeChange("pageview")}
-                />
-            </div>
+        <div className="flex flex-col gap-2.5">
+            <Segmented<GoalType>
+                options={[
+                    { value: "click", label: "Element click" },
+                    { value: "pageview", label: "Page visit" },
+                ]}
+                value={goalType}
+                onChange={onGoalTypeChange}
+            />
 
             {goalType === "click" ? (
-                <div className="flex flex-col gap-2">
-                    {goalElement ? (
-                        <div className="flex items-center justify-between gap-2 bg-emerald-50 border border-emerald-200 rounded-md py-2 px-3">
-                            <p className="text-xs text-emerald-800 truncate">
-                                <span className="font-semibold uppercase text-[10px] tracking-wider mr-1.5">
-                                    {goalElement.tag}
-                                </span>
-                                {goalElement.text ?? goalElement.alt ?? "(no text)"}
-                            </p>
-                            <button
-                                type="button"
-                                onClick={onStartPicking}
-                                className="text-[11px] text-emerald-600 hover:text-emerald-800 shrink-0 transition-colors"
-                            >
-                                Change
-                            </button>
-                        </div>
-                    ) : pickingGoal ? (
-                        <div className="flex items-center justify-between gap-2 bg-emerald-50 border border-dashed border-emerald-400 rounded-md py-2 px-3">
-                            <p className="text-xs text-emerald-700">
-                                Click the element on the page that counts as a conversion…
-                            </p>
-                            <button
-                                type="button"
-                                onClick={onCancelPicking}
-                                className="text-[11px] text-slate-400 hover:text-slate-600 shrink-0 transition-colors"
-                            >
-                                Cancel
-                            </button>
-                        </div>
-                    ) : (
+                goalElement ? (
+                    <div className="flex items-center justify-between gap-2 bg-emerald-50 border border-emerald-200 rounded-lg py-2 px-2.5">
+                        <p className="text-xs text-emerald-800 truncate">
+                            <span className="font-semibold uppercase text-[10px] tracking-wider mr-1.5">
+                                {goalElement.tag}
+                            </span>
+                            {goalElement.text ?? goalElement.alt ?? "(no text)"}
+                        </p>
                         <button
                             type="button"
                             onClick={onStartPicking}
-                            className="text-xs text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md py-2 px-3 text-left transition-colors"
+                            className="text-[11px] font-medium text-emerald-600 hover:text-emerald-800 shrink-0 transition-colors cursor-pointer"
                         >
-                            Pick the conversion element (e.g. your signup button)
+                            Change
                         </button>
-                    )}
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                        We count a conversion when a visitor clicks this element.
-                    </p>
-                </div>
+                    </div>
+                ) : pickingGoal ? (
+                    <div className="flex items-center justify-between gap-2 bg-emerald-50 border border-dashed border-emerald-400 rounded-lg py-2.5 px-3">
+                        <p className="text-xs text-emerald-700">
+                            Now click the element that counts as a conversion…
+                        </p>
+                        <button
+                            type="button"
+                            onClick={onCancelPicking}
+                            className="text-[11px] text-stone-400 hover:text-stone-600 shrink-0 transition-colors cursor-pointer"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                ) : (
+                    <button
+                        type="button"
+                        onClick={onStartPicking}
+                        className="flex items-center gap-2 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-dashed border-emerald-300 rounded-lg py-2.5 px-3 transition-colors cursor-pointer"
+                    >
+                        <LuMousePointerClick className="size-3.5 shrink-0" />
+                        Pick the conversion element on the page
+                    </button>
+                )
             ) : (
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-1.5">
                     <input
                         type="text"
                         value={goalPagePath}
                         onChange={(e) => onPathChange(e.target.value)}
                         placeholder="/thank-you"
-                        className="text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-md py-2 px-3 focus:outline-none focus:border-orange-600 placeholder-slate-400"
+                        className="text-xs text-stone-700 bg-stone-50 border border-stone-200 rounded-lg py-2 px-3 focus:outline-none focus:border-orange-600 placeholder:text-stone-400"
                     />
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                        We count a conversion when a visitor reaches this path — great for
-                        form submits that redirect to a confirmation page.
+                    <p className="text-[11px] text-stone-400 leading-relaxed">
+                        Reaching this path counts as a conversion — great for forms
+                        that redirect to a confirmation page.
                     </p>
                 </div>
             )}
         </div>
-    );
-}
-
-function GoalTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
-    return (
-        <button
-            type="button"
-            onClick={onClick}
-            className={`text-xs py-1.5 rounded-md transition-colors ${
-                active ? "bg-white text-slate-800 font-medium shadow-sm" : "text-slate-500 hover:text-slate-700"
-            }`}
-        >
-            {label}
-        </button>
     );
 }

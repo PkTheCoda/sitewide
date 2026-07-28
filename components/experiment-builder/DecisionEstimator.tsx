@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { estimateTimeToDecision, requiredSampleSizePerVariant } from "@/lib/stats";
+import { Segmented } from "./ui";
 
 // The "will this test ever finish?" reality check, shown as the last builder
-// step. A founder testing a 300-visitors/month page should SEE that it takes
-// years to decide — and reach for a higher-traffic page or a bolder change —
-// instead of quietly waiting six weeks on data that can't arrive.
+// step (BuilderSidebar wraps it in the step card). A founder testing a
+// 300-visitors/month page should SEE that it takes years to decide — and reach
+// for a higher-traffic page or a bolder change — instead of quietly waiting
+// six weeks on data that can't arrive.
 //
 // The per-variant sample size we compute here is reported up (onSampleSize) and
 // saved as the experiment's min_sample_size, so the date shown is the exact
@@ -54,10 +56,10 @@ function verdict(days: number) {
 
 const TONE: Record<string, { panel: string; big: string; sub: string; line: string }> = {
     calm: {
-        panel: "bg-slate-50 border-slate-200",
-        big: "text-slate-800",
-        sub: "text-slate-400",
-        line: "text-slate-500",
+        panel: "bg-stone-50 border-stone-200",
+        big: "text-stone-800",
+        sub: "text-stone-400",
+        line: "text-stone-500",
     },
     warn: {
         panel: "bg-rose-50 border-rose-200",
@@ -91,14 +93,10 @@ export default function DecisionEstimator({ groupCount, onSampleSize }: Props) {
             : null;
 
     return (
-        <section className="flex flex-col gap-2">
-            <h4 className="uppercase text-slate-500 tracking-wider text-xs font-medium">
-                5 · Time to decision
-            </h4>
-
+        <div className="flex flex-col gap-2.5">
             <div className="grid grid-cols-2 gap-2">
                 <label className="flex flex-col gap-1">
-                    <span className="text-[11px] text-slate-500">Monthly visitors</span>
+                    <span className="text-[11px] text-stone-500">Monthly visitors</span>
                     <input
                         type="number"
                         inputMode="numeric"
@@ -106,11 +104,11 @@ export default function DecisionEstimator({ groupCount, onSampleSize }: Props) {
                         value={monthlyVisitors}
                         onChange={(e) => setMonthlyVisitors(e.target.value)}
                         placeholder="e.g. 15,000"
-                        className="text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-md py-2 px-3 focus:outline-none focus:border-orange-600 placeholder-slate-400"
+                        className="text-xs text-stone-700 bg-stone-50 border border-stone-200 rounded-lg py-2 px-3 focus:outline-none focus:border-orange-600 placeholder:text-stone-400"
                     />
                 </label>
                 <label className="flex flex-col gap-1">
-                    <span className="text-[11px] text-slate-500">Conversion rate</span>
+                    <span className="text-[11px] text-stone-500">Conversion rate</span>
                     <div className="relative">
                         <input
                             type="number"
@@ -120,9 +118,9 @@ export default function DecisionEstimator({ groupCount, onSampleSize }: Props) {
                             step="0.1"
                             value={baselinePct}
                             onChange={(e) => setBaselinePct(e.target.value)}
-                            className="w-full text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-md py-2 pl-3 pr-7 focus:outline-none focus:border-orange-600"
+                            className="w-full text-xs text-stone-700 bg-stone-50 border border-stone-200 rounded-lg py-2 pl-3 pr-7 focus:outline-none focus:border-orange-600"
                         />
-                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-stone-400">
                             %
                         </span>
                     </div>
@@ -130,32 +128,16 @@ export default function DecisionEstimator({ groupCount, onSampleSize }: Props) {
             </div>
 
             <div className="flex flex-col gap-1">
-                <span className="text-[11px] text-slate-500">Expected impact</span>
-                <div className="grid grid-cols-3 gap-1 bg-slate-100 rounded-lg p-1">
-                    {IMPACT_PRESETS.map(({ key, label, hint }) => (
-                        <button
-                            key={key}
-                            type="button"
-                            onClick={() => setImpact(key)}
-                            className={`flex flex-col items-center py-1.5 rounded-md transition-colors ${
-                                impact === key
-                                    ? "bg-white shadow-sm"
-                                    : "hover:bg-white/50"
-                            }`}
-                        >
-                            <span
-                                className={`text-xs ${
-                                    impact === key
-                                        ? "text-slate-800 font-medium"
-                                        : "text-slate-500"
-                                }`}
-                            >
-                                {label}
-                            </span>
-                            <span className="text-[10px] text-slate-400">{hint}</span>
-                        </button>
-                    ))}
-                </div>
+                <span className="text-[11px] text-stone-500">Expected impact</span>
+                <Segmented
+                    options={IMPACT_PRESETS.map(({ key, label, hint }) => ({
+                        value: key,
+                        label,
+                        hint,
+                    }))}
+                    value={impact}
+                    onChange={setImpact}
+                />
             </div>
 
             {/* Live readout */}
@@ -165,13 +147,13 @@ export default function DecisionEstimator({ groupCount, onSampleSize }: Props) {
                     const t = TONE[v.tone];
                     return (
                         <div
-                            className={`mt-1 rounded-md border ${t.panel} p-3 flex flex-col gap-1.5`}
+                            className={`mt-0.5 rounded-lg border ${t.panel} p-3 flex flex-col gap-1.5`}
                         >
                             <div className="flex items-baseline justify-between gap-2">
-                                <span className={`text-lg font-semibold ${t.big}`}>
+                                <span className={`font-robot text-lg font-semibold tabular-nums ${t.big}`}>
                                     {formatDuration(estimate.days)}
                                 </span>
-                                <span className={`text-[11px] ${t.sub}`}>
+                                <span className={`text-[11px] tabular-nums ${t.sub}`}>
                                     {estimate.perVariant.toLocaleString()} / variant ·{" "}
                                     {groupCount} arms
                                 </span>
@@ -183,14 +165,14 @@ export default function DecisionEstimator({ groupCount, onSampleSize }: Props) {
                     );
                 })()
             ) : (
-                <div className="mt-1 rounded-md border border-dashed border-slate-200 p-3">
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                <div className="mt-0.5 rounded-lg border border-dashed border-stone-200 p-3">
+                    <p className="text-[11px] text-stone-400 leading-relaxed">
                         {perVariant === null
                             ? "Enter a conversion rate between 0 and 100% to estimate."
                             : "Add your page's monthly traffic to see how long this test needs to run."}
                     </p>
                 </div>
             )}
-        </section>
+        </div>
     );
 }
