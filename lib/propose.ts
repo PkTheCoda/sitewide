@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { DECISION_FLOOR } from "@/lib/stats";
 import { Comment, PageElement } from "@/lib/types";
 
 // ─── The "closing the loop" step ────────────────────────────────────────────
@@ -236,9 +237,10 @@ export async function proposeNextExperiment(
             goal_selector: exp.goal_selector,
             goal_fallback: exp.goal_fallback,
             goal_page_path: exp.goal_page_path,
-            // Same floor the evaluator enforces — a draft below it would just
-            // sit in "insufficient sample" forever.
-            min_sample_size: Math.max(100, exp.min_sample_size ?? 1000),
+            // Fresh drafts get the standard floor rather than inheriting the
+            // parent's (which may be a legacy power-analysis number) — under
+            // the sequential rule the floor is a guardrail, not a commitment.
+            min_sample_size: DECISION_FLOOR,
             auto_promote: exp.auto_promote,
             status: "draft",
             created_by: "agent",

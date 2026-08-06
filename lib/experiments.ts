@@ -26,10 +26,10 @@ export type NewExperiment = {
     goal_type: GoalType;
     goal_element: PageElement | null; // required for click goals
     goal_page_path: string | null;    // required for pageview goals
-    // Per-variant exposures the agent should wait for before it can call a
-    // winner. Derived from the builder's time-to-decision estimator (baseline +
-    // expected lift → power analysis) so the date shown to the founder is the
-    // SAME threshold the agent enforces. Omit to keep the DB default.
+    // Per-variant exposure FLOOR before the agent starts judging — a guardrail
+    // against tiny-n flukes, not a power-analysis commitment (the Bayesian
+    // sequential rule in lib/stats.ts decides when the data is sufficient).
+    // The builder passes DECISION_FLOOR. Omit to keep the DB default.
     min_sample_size?: number;
 };
 

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/services/context/authContext";
 import { createExperiment } from "@/lib/experiments";
+import { DECISION_FLOOR } from "@/lib/stats";
 import {
     ChangeType,
     GoalType,
@@ -88,10 +89,6 @@ export default function BuilderSidebar({
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [createdId, setCreatedId] = useState<string | null>(null);
-    // Per-variant sample size from the time-to-decision estimator. Persisted as
-    // min_sample_size so the agent waits for exactly the sample the founder was
-    // shown a date for.
-    const [estSampleSize, setEstSampleSize] = useState<number | null>(null);
 
     // Keep the change type valid for the selected element kind.
     useEffect(() => {
@@ -249,7 +246,9 @@ export default function BuilderSidebar({
             goal_type: goalType,
             goal_element: goalType === "click" ? goalElement : null,
             goal_page_path: goalType === "pageview" ? goalPagePath.trim() : null,
-            min_sample_size: estSampleSize ?? undefined,
+            // Just the flake-guard floor — the agent's sequential rule decides
+            // when there's enough data, so no sample size is committed here.
+            min_sample_size: DECISION_FLOOR,
         });
 
         setSubmitting(false);
@@ -476,11 +475,10 @@ export default function BuilderSidebar({
                         title="Time to decision"
                         state="idle"
                         optional
-                        hint="Estimates how long this test needs based on your traffic — and sets the sample size your agent waits for before calling a result."
+                        hint="Estimates how long this test is likely to run on your traffic. There's no fixed sample size — your agent checks daily and ends the test as soon as one version is confidently better."
                     >
                         <DecisionEstimator
                             groupCount={Math.max(variantPayloads.length, 1) + 1}
-                            onSampleSize={setEstSampleSize}
                         />
                     </StepCard>
                 </div>

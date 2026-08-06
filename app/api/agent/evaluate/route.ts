@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { compareVariants, VariantStats } from "@/lib/stats";
+import { compareVariants, DECISION_FLOOR, VariantStats } from "@/lib/stats";
 import { proposeNextExperiment } from "@/lib/propose";
 import { sendDecisionEmail, sendWeeklyDigests } from "@/lib/agentEmails";
 
@@ -14,7 +14,7 @@ export const maxDuration = 60;
 //                   per variant
 //   2. DECIDES    — health check (is the data trustworthy?), then the harm
 //                   gate (is a variant hurting conversions?), then the
-//                   min-sample gate and the significance test
+//                   sample floor and the Bayesian decision rule
 //   3. ACTS       — pauses broken experiments, kills losing variants,
 //                   promotes the winner (status=completed + winner_variant_id;
 //                   the snippet then serves that variant to 100% of visitors),
@@ -28,16 +28,17 @@ export const maxDuration = 60;
 // Trigger: Vercel Cron (daily) or manually:
 //   curl -X POST https://.../api/agent/evaluate -H "authorization: Bearer $AGENT_SECRET"
 //
-// Statistical honesty: WIN decisions only happen when every live arm has at
-// least min_sample_size exposures, at a fixed daily cadence — clear of the
-// peeking problem. The HARM gate (circuit breaker) intentionally peeks daily,
-// but only ever stops variants, at a much stricter threshold (p < 0.01): a
-// slightly inflated false-kill rate is a fair price for not serving a losing
-// variant for a week. It can never declare a winner.
+// Statistical honesty: the decision rule (lib/stats.ts) is Bayesian and built
+// for exactly this daily cadence — it acts only when a variant is ≥95% likely
+// better AND the expected cost of a wrong call is capped at a fraction of the
+// conversion rate, so checking every day doesn't inflate anything the way
+// peeking at a fixed-horizon z-test did. min_sample_size is now just a floor
+// (default DECISION_FLOOR) keeping tiny-n flukes out, not a power-analysis
+// commitment.
 
 // Circuit breaker: a challenger this confidently below control gets killed on
-// any run, before min-sample. HARM_MIN_EXPOSURES keeps tiny-n flukes out.
-const HARM_P = 0.01;
+// any run, before the floor. HARM_MIN_EXPOSURES keeps tiny-n flukes out.
+const HARM_CHANCE = 0.01; // P(variant beats control) at or below this = harmful
 const HARM_MIN_EXPOSURES = 25;
 
 // Health check: pause the experiment when this many unique visitors reported
@@ -47,8 +48,8 @@ const HARM_MIN_EXPOSURES = 25;
 const MISS_MIN_VISITORS = 5;
 const MISS_MIN_RATE = 0.2;
 
-// Floor for min_sample_size: below this a "significant" result is mostly
-// noise, whatever the founder typed into the builder.
+// Absolute floor for min_sample_size: below this even the risk-capped rule is
+// judging mostly noise, whatever the experiment row says.
 const SAMPLE_FLOOR = 100;
 
 // Two entry points, same loop:
@@ -233,8 +234,7 @@ async function evaluateExperiment(
     const comparisons = compareVariants(control, challengers);
     const harmful = comparisons.filter(
         (c) =>
-            c.variantRate < c.controlRate &&
-            c.pValue < HARM_P &&
+            c.chanceToBeat <= HARM_CHANCE &&
             control.exposures >= HARM_MIN_EXPOSURES &&
             challengers.find((s) => s.variantId === c.variantId)!.exposures >= HARM_MIN_EXPOSURES
     );
@@ -280,7 +280,7 @@ async function evaluateExperiment(
             variant_name: variant.name,
             control_rate: h.controlRate,
             variant_rate: h.variantRate,
-            p_value: h.pValue,
+            chance_to_beat: h.chanceToBeat,
             stats,
         };
         await log(supabase, experiment.id, "killed_variant", detail);
@@ -290,8 +290,8 @@ async function evaluateExperiment(
     const liveChallengers = challengers.filter((s) => !harmful.some((h) => h.variantId === s.variantId));
     const liveComparisons = comparisons.filter((c) => !harmful.some((h) => h.variantId === c.variantId));
 
-    // ── 2c. Sample gate, then the honest fixed-horizon test ──────────────────
-    const minSample = Math.max(SAMPLE_FLOOR, experiment.min_sample_size ?? 1000);
+    // ── 2c. Sample floor, then the sequential decision rule ──────────────────
+    const minSample = Math.max(SAMPLE_FLOOR, experiment.min_sample_size ?? DECISION_FLOOR);
     const liveStats = [control, ...liveChallengers];
     const underSampled = liveStats.some((s) => s.exposures < minSample);
 
@@ -301,16 +301,15 @@ async function evaluateExperiment(
         return { experiment_id: experiment.id, name: experiment.name, decision: "continue", ...detail };
     }
 
-    const significantWinners = liveComparisons
-        .filter((c) => c.significant && c.variantRate > c.controlRate)
-        .sort((a, b) => b.variantRate - a.variantRate);
-    const allSignificantlyWorse =
-        liveComparisons.length > 0 &&
-        liveComparisons.every((c) => c.significant && c.variantRate < c.controlRate);
+    const decisiveWinners = liveComparisons
+        .filter((c) => c.verdict === "variant")
+        .sort((a, b) => b.chanceToBeat - a.chanceToBeat);
+    const allConfidentlyWorse =
+        liveComparisons.length > 0 && liveComparisons.every((c) => c.verdict === "control");
 
     // ── 3. Act ───────────────────────────────────────────────────────────────
-    if (significantWinners.length > 0) {
-        const winner = significantWinners[0];
+    if (decisiveWinners.length > 0) {
+        const winner = decisiveWinners[0];
         const winnerVariant = live.find((v) => v.id === winner.variantId)!;
 
         if (experiment.auto_promote) {
@@ -330,7 +329,8 @@ async function evaluateExperiment(
             control_rate: winner.controlRate,
             winner_rate: winner.variantRate,
             lift: winner.lift,
-            p_value: winner.pValue,
+            chance_to_beat: winner.chanceToBeat,
+            risk_if_wrong: winner.riskOfChoosing,
             auto_promoted: experiment.auto_promote,
             stats,
         };
@@ -342,13 +342,14 @@ async function evaluateExperiment(
             supabase,
             experiment.id,
             `"${winnerVariant.name}" WON: ${(winner.variantRate * 100).toFixed(1)}% conversion vs ` +
-                `${(winner.controlRate * 100).toFixed(1)}% control (p=${winner.pValue.toFixed(4)}). ` +
+                `${(winner.controlRate * 100).toFixed(1)}% control ` +
+                `(${(winner.chanceToBeat * 100).toFixed(1)}% chance it's genuinely better). ` +
                 `The winning copy is now served to all visitors.`
         );
         return { experiment_id: experiment.id, name: experiment.name, decision: "promoted_winner", proposal, ...detail };
     }
 
-    if (allSignificantlyWorse) {
+    if (allConfidentlyWorse) {
         // Every challenger lost — end the test, keep the original.
         await supabase
             .from("experiments")
@@ -373,7 +374,7 @@ async function evaluateExperiment(
         return { experiment_id: experiment.id, name: experiment.name, decision: "kept_control", proposal, ...detail };
     }
 
-    const detail = { reason: "no_significant_difference_yet", comparisons: liveComparisons, stats, kills };
+    const detail = { reason: "no_clear_winner_yet", comparisons: liveComparisons, stats, kills };
     await log(supabase, experiment.id, "evaluated", detail);
     return { experiment_id: experiment.id, name: experiment.name, decision: kills.length > 0 ? "killed_variant" : "continue", ...detail };
 }

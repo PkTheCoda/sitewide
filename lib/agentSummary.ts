@@ -6,18 +6,30 @@ import { AgentAction } from "@/lib/types";
 export function agentActionSummary(action: AgentAction): string {
     const d = (action.detail ?? {}) as Record<string, unknown>;
     const pct = (n: unknown) => (typeof n === "number" ? `${(n * 100).toFixed(1)}%` : "?");
+    // New rows log chance_to_beat (Bayesian, 0..1); rows from before the
+    // sequential-stats switch logged a z-test p_value instead.
+    const confidence = (chance: unknown, p: unknown) =>
+        typeof chance === "number"
+            ? `${(chance * 100).toFixed(1)}% sure`
+            : typeof p === "number"
+              ? `p=${p.toFixed(4)}`
+              : "?";
     if (action.action === "promoted_winner") {
         const verb = d.auto_promoted === false ? "Found a winner (auto-promote is off)" : "Promoted winner";
-        const p = typeof d.p_value === "number" ? d.p_value.toFixed(4) : "?";
-        return `${verb}: ${d.winner_name ?? "variant"} — ${pct(d.winner_rate)} vs ${pct(d.control_rate)} control (p=${p})`;
+        return `${verb}: ${d.winner_name ?? "variant"} — ${pct(d.winner_rate)} vs ${pct(d.control_rate)} control (${confidence(d.chance_to_beat, d.p_value)} it's genuinely better)`;
     }
     if (action.action === "kept_control")
         return d.reason === "harm_gate"
-            ? "Circuit breaker: ended the test early — every variant was significantly hurting conversions, the original is back for all visitors"
-            : "Ended the test — every variant performed significantly worse than the original";
+            ? "Circuit breaker: ended the test early — every variant was confidently hurting conversions, the original is back for all visitors"
+            : "Ended the test — every variant performed confidently worse than the original";
     if (action.action === "killed_variant") {
-        const p = typeof d.p_value === "number" ? d.p_value.toFixed(4) : "?";
-        return `Circuit breaker: killed "${d.variant_name ?? "a variant"}" — ${pct(d.variant_rate)} vs ${pct(d.control_rate)} control (p=${p}); its visitors now see the original, the test continues with the remaining variants`;
+        const chance =
+            typeof d.chance_to_beat === "number"
+                ? `${((1 - (d.chance_to_beat as number)) * 100).toFixed(1)}% sure it was losing`
+                : typeof d.p_value === "number"
+                  ? `p=${(d.p_value as number).toFixed(4)}`
+                  : "?";
+        return `Circuit breaker: killed "${d.variant_name ?? "a variant"}" — ${pct(d.variant_rate)} vs ${pct(d.control_rate)} control (${chance}); its visitors now see the original, the test continues with the remaining variants`;
     }
     if (action.action === "paused_broken")
         return `Paused the experiment — ${d.miss_visitors ?? "several"} visitors couldn't be shown "${d.variant_name ?? "a variant"}" because its page element wasn't found (did the page change?). Fix the selector and resume`;
@@ -32,6 +44,6 @@ export function agentActionSummary(action: AgentAction): string {
         return `Couldn't send the email "${d.subject ?? "notification"}" (${d.reason ?? "unknown"})`;
     if (action.action === "error") return `Error during evaluation: ${d.message ?? "unknown"}`;
     if (d.reason === "insufficient_sample")
-        return `Waiting for more data — every variant needs ${d.min_sample_size ?? "?"} visitors before the agent will decide`;
-    return "Evaluated — no statistically significant difference between variants yet";
+        return `Waiting for more data — every variant needs ${d.min_sample_size ?? "?"} visitors before the agent starts judging`;
+    return "Evaluated — no version is confidently better yet, the test continues";
 }

@@ -146,10 +146,15 @@ Files: `app/api/agent/evaluate/route.ts`, `lib/stats.ts`
 - **Manually** — `curl -X POST https://.../api/agent/evaluate -H "authorization: Bearer $AGENT_SECRET"`.
   Use this for testing; the JSON response shows every decision it made.
 
-The fixed cadence is not laziness — it's statistical honesty. Checking
-significance continuously ("peeking") and stopping at the first p < 0.05
-produces false winners constantly. Fixed schedule + minimum sample size is the
-crude-but-correct guard.
+The decision rule (lib/stats.ts) is Bayesian and built for repeated looks:
+the agent acts only when a variant is ≥95% likely to beat control AND the
+expected cost of being wrong is under 0.05% of control's conversion rate. On
+early, noisy data that risk cap effectively demands ~99.7% confidence and
+relaxes toward 95% as the posterior tightens — so checking daily is safe,
+unlike naive "stop at the first p < 0.05" peeking on a z-test (which is what
+this replaced). `scripts/test-bayes-stats.ts` verifies both the math (Monte
+Carlo) and the daily-loop behavior (A/A false-call rate, time-to-decision on
+real lifts).
 
 **What one evaluation does, per running experiment:**
 
@@ -159,25 +164,30 @@ crude-but-correct guard.
               Count unique converted visitors per variant
                 (only those who ALSO have an exposure row).
 
-2. GATE       Is ANY variant below min_sample_size exposures (default 1000)?
+2. GATE       Is ANY variant below min_sample_size exposures (floor,
+              default DECISION_FLOOR = 500)?
               → decision: CONTINUE. Log "insufficient_sample" with the
                 current numbers to agent_actions. Touch nothing. Done.
 
-3. TEST       Two-proportion z-test: each challenger vs control
-              (lib/stats.ts). significant = p < 0.05.
+3. TEST       Bayesian comparison: each challenger vs control
+              (lib/stats.ts). Decisive = ≥95% chance to beat control
+              AND expected cost-if-wrong ≤ 0.05% of control's rate
+              (verdict "variant"), or the mirror image (verdict
+              "control").
 
 4. DECIDE + ACT — exactly one of three outcomes:
 
-   a) ≥1 challenger significantly BETTER than control
-      → pick the one with the highest conversion rate
+   a) ≥1 challenger decisively BETTER than control
+      → pick the one with the highest chance to beat
       → if auto_promote (default true):
           UPDATE experiments SET status='completed',
                  winner_variant_id=<challenger>, ended_at=now()
-      → log "promoted_winner" (rates, lift, p-value, samples)
+      → log "promoted_winner" (rates, lift, chance_to_beat,
+        risk_if_wrong, samples)
       → from the next config-cache refresh, EVERY visitor gets the
         winning payload; tracking stops.
 
-   b) ALL challengers significantly WORSE than control
+   b) ALL challengers decisively WORSE than control
       → UPDATE experiments SET status='completed',
              winner_variant_id=<control>, ended_at=now()
       → log "kept_control"
@@ -185,7 +195,7 @@ crude-but-correct guard.
         "serve the original" — i.e., serve nothing). Test over,
         site unchanged, founder learns the original was better.
 
-   c) Neither → decision: CONTINUE. Log "no_significant_difference_yet"
+   c) Neither → decision: CONTINUE. Log "no_clear_winner_yet"
       with the comparisons. The test keeps collecting data and gets
       re-examined at the next cron run.
 
@@ -229,9 +239,10 @@ row each. 96 control visitors click signup (1 conversion row each), 144 B
 visitors do. DB now holds ~2,400 exposure rows + 240 conversion rows.
 
 Mon 9:00 UTC: cron fires. Control: 96/1200 = 8.0%. B: 144/1200 = 12.0%.
-Both arms ≥ 1000 exposures → gate passes. z-test → p ≈ 0.001 → significant.
+Both arms ≥ 500 exposures → floor passes. Bayesian rule → B is ~99.9% likely
+better with negligible risk-if-wrong → decisive.
 B promoted: experiment → `completed`, `winner_variant_id` = B,
-agent_actions gets `promoted_winner {lift: +50%, p: 0.001, …}`.
+agent_actions gets `promoted_winner {lift: +50%, chance_to_beat: 0.999, …}`.
 
 9:01 UTC: a visitor loads `/`. Config (fresh cache) says: completed, winner B.
 Snippet applies B's headline. No events fire. Every visitor from now on sees
@@ -249,8 +260,9 @@ B. The founder gets the result card in the dashboard — and eventually an email
 4. `curl -X POST http://localhost:3000/api/agent/evaluate -H "authorization: Bearer $AGENT_SECRET"`
 5. Read the JSON response + `agent_actions`. If a variant won, reload your
    site: everyone sees the winner now.
-6. Remember min_sample_size=2 makes the z-test statistically meaningless —
-   it's for testing the plumbing, not the math.
+6. Remember min_sample_size=2 makes the comparison statistically meaningless —
+   it's for testing the plumbing, not the math. (The math itself is tested by
+   `node scripts/test-bayes-stats.ts`, no server or DB needed.)
 
 ---
 

@@ -60,8 +60,8 @@ function digestEmail(): string {
         ${variantTable(sampleVariants(true).variants, sampleVariants(true).numbers)}`;
 
     const weekItems = [
-        { action: "promoted_winner", detail: { winner_name: "Variant B", winner_rate: 0.0801, control_rate: 0.0498, p_value: 0.0012, auto_promoted: true } },
-        { action: "killed_variant", detail: { variant_name: "Variant C", variant_rate: 0.0151, control_rate: 0.0498, p_value: 0.004 } },
+        { action: "promoted_winner", detail: { winner_name: "Variant B", winner_rate: 0.0801, control_rate: 0.0498, chance_to_beat: 0.988, auto_promoted: true } },
+        { action: "killed_variant", detail: { variant_name: "Variant C", variant_rate: 0.0151, control_rate: 0.0498, chance_to_beat: 0.004 } },
         { action: "paused_broken", detail: { variant_name: "Pricing CTA", miss_visitors: 7 } },
     ];
     const names = ["Hero headline", "Pricing CTA copy", "Pricing CTA copy"];
@@ -84,10 +84,10 @@ function digestEmail(): string {
 
 const TYPES: Record<string, () => string> = {
     promoted_winner: () =>
-        decisionEmail("promoted_winner", { winner_name: "Variant B", winner_rate: 0.0801, control_rate: 0.0498, p_value: 0.0012, auto_promoted: true }),
+        decisionEmail("promoted_winner", { winner_name: "Variant B", winner_rate: 0.0801, control_rate: 0.0498, chance_to_beat: 0.988, auto_promoted: true }),
     kept_control: () => decisionEmail("kept_control", { reason: "all_variants_worse" }),
     killed_variant: () =>
-        decisionEmail("killed_variant", { variant_name: "Variant C", variant_rate: 0.0151, control_rate: 0.0498, p_value: 0.004 }, true),
+        decisionEmail("killed_variant", { variant_name: "Variant C", variant_rate: 0.0151, control_rate: 0.0498, chance_to_beat: 0.004 }, true),
     paused_broken: () => decisionEmail("paused_broken", { variant_name: "Variant B", miss_visitors: 7 }),
     digest: () => digestEmail(),
 };

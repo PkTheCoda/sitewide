@@ -1,56 +1,50 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { estimateTimeToDecision, requiredSampleSizePerVariant } from "@/lib/stats";
-import { Segmented } from "./ui";
+import { useState } from "react";
+import { DECISION_FLOOR, estimateTimeToDecision } from "@/lib/stats";
 
 // The "will this test ever finish?" reality check, shown as the last builder
 // step (BuilderSidebar wraps it in the step card). A founder testing a
-// 300-visitors/month page should SEE that it takes years to decide — and reach
-// for a higher-traffic page or a bolder change — instead of quietly waiting
-// six weeks on data that can't arrive.
+// 300-visitors/month page should SEE that answers take months to arrive — and
+// reach for a higher-traffic page — instead of quietly waiting on data that
+// can't arrive.
 //
-// The per-variant sample size we compute here is reported up (onSampleSize) and
-// saved as the experiment's min_sample_size, so the date shown is the exact
-// threshold the agent waits for — not a throwaway estimate.
+// Purely informational since the sequential-stats switch: the agent checks
+// daily and ends the test the moment one version is confidently better, so
+// there is no sample size to commit to (and no "expected impact" question the
+// founder can't answer). We show an honest RANGE instead — a big lift
+// resolves near the fast end, a moderate one near the slow end — bracketed by
+// the same power math the old estimator used, as an ETA rather than a gate.
 
 type Props = {
-    groupCount: number; // control + variants (drives total sample + the wait)
-    onSampleSize: (perVariant: number | null) => void;
+    groupCount: number; // control + variants (splitting traffic more ways = slower)
 };
 
-// Bigger expected change ⇒ fewer visitors needed ⇒ a faster answer. Framed by
-// the kind of edit it usually takes, so the founder can pick honestly.
-const IMPACT_PRESETS: { key: string; label: string; hint: string; mde: number }[] = [
-    { key: "subtle", label: "Subtle", hint: "a copy tweak", mde: 0.1 },
-    { key: "moderate", label: "Moderate", hint: "a clearer offer", mde: 0.25 },
-    { key: "bold", label: "Bold", hint: "a redesign", mde: 0.5 },
-];
+// The bracket: +50% relative lift ("a redesign that works") to +25% ("a
+// clearly better offer"). Below ~+25% the honest answer on typical SaaS
+// traffic is "months", which the slow end already communicates.
+const MDE_FAST = 0.5;
+const MDE_SLOW = 0.25;
 
-function formatDuration(days: number): string {
-    if (days <= 90) return `~${days} day${days === 1 ? "" : "s"}`;
+function fmtDays(days: number): string {
+    if (days <= 90) return `${days} day${days === 1 ? "" : "s"}`;
     const months = Math.round(days / 30);
-    if (months <= 18) return `~${months} months`;
+    if (months <= 18) return `${months} months`;
     const years = days / 365;
-    return years >= 2 ? `over ${Math.floor(years)} years` : "over a year";
+    return years >= 2 ? `${Math.floor(years)}+ years` : "a year";
 }
 
-// Deliberately calm: this shows BEFORE the founder has committed anything, so a
-// red "2 years" wall just scares people off good products. Any reasonable wait
-// reads as neutral, matter-of-fact guidance. We only escalate to a warning tone
-// (and the nudge) when the test is genuinely unworkable — the same >60-day line
-// the running-experiment countdown uses, so the two never disagree.
-function verdict(days: number) {
-    if (days > 60)
+function verdict(fastDays: number, slowDays: number) {
+    if (fastDays > 60)
         return {
             tone: "warn",
-            line: "This page's traffic makes for a long test — a bolder change, fewer variants, or a higher-traffic page would get you a result much sooner.",
+            line: "This page's traffic makes for a long test even for a big improvement — a higher-traffic page or fewer variants would get you a result much sooner.",
         };
-    if (days <= 21)
+    if (slowDays <= 21)
         return { tone: "calm", line: "You'll have a clear answer within a few weeks." };
     return {
         tone: "calm",
-        line: "A steady run — leave it going and your agent calls it once the data's in.",
+        line: "Your agent checks daily and ends the test as soon as one version is confidently better — big improvements land near the fast end.",
     };
 }
 
@@ -69,28 +63,26 @@ const TONE: Record<string, { panel: string; big: string; sub: string; line: stri
     },
 };
 
-export default function DecisionEstimator({ groupCount, onSampleSize }: Props) {
+export default function DecisionEstimator({ groupCount }: Props) {
     const [monthlyVisitors, setMonthlyVisitors] = useState("");
     const [baselinePct, setBaselinePct] = useState("5");
-    const [impact, setImpact] = useState("moderate");
 
-    const mde = IMPACT_PRESETS.find((p) => p.key === impact)!.mde;
     const baseline = parseFloat(baselinePct) / 100;
     const monthly = parseFloat(monthlyVisitors);
     const dailyVisitors = monthly / 30;
 
-    // Sample size depends only on baseline + expected lift (not traffic), so we
-    // can persist it even if the founder skips the traffic input.
-    const perVariant = useMemo(
-        () => requiredSampleSizePerVariant(baseline, mde),
-        [baseline, mde]
-    );
-    useEffect(() => onSampleSize(perVariant), [perVariant, onSampleSize]);
+    const fast = monthly > 0
+        ? estimateTimeToDecision({ baseline, mde: MDE_FAST, dailyVisitors, groupCount })
+        : null;
+    const slow = monthly > 0
+        ? estimateTimeToDecision({ baseline, mde: MDE_SLOW, dailyVisitors, groupCount })
+        : null;
 
-    const estimate =
-        monthly > 0
-            ? estimateTimeToDecision({ baseline, mde, dailyVisitors, groupCount })
-            : null;
+    // Even a huge lift can't be called before every arm clears the floor.
+    const floorDays =
+        monthly > 0 ? Math.ceil(DECISION_FLOOR / (dailyVisitors / groupCount)) : null;
+    const fastDays = fast && floorDays !== null ? Math.max(fast.days, floorDays) : null;
+    const slowDays = slow && fastDays !== null ? Math.max(slow.days, fastDays) : null;
 
     return (
         <div className="flex flex-col gap-2.5">
@@ -127,35 +119,25 @@ export default function DecisionEstimator({ groupCount, onSampleSize }: Props) {
                 </label>
             </div>
 
-            <div className="flex flex-col gap-1">
-                <span className="text-[11px] text-stone-500">Expected impact</span>
-                <Segmented
-                    options={IMPACT_PRESETS.map(({ key, label, hint }) => ({
-                        value: key,
-                        label,
-                        hint,
-                    }))}
-                    value={impact}
-                    onChange={setImpact}
-                />
-            </div>
-
             {/* Live readout */}
-            {estimate ? (
+            {fastDays !== null && slowDays !== null ? (
                 (() => {
-                    const v = verdict(estimate.days);
+                    const v = verdict(fastDays, slowDays);
                     const t = TONE[v.tone];
+                    const range =
+                        fastDays === slowDays
+                            ? `~${fmtDays(fastDays)}`
+                            : `~${fmtDays(fastDays)} – ${fmtDays(slowDays)}`;
                     return (
                         <div
                             className={`mt-0.5 rounded-lg border ${t.panel} p-3 flex flex-col gap-1.5`}
                         >
                             <div className="flex items-baseline justify-between gap-2">
                                 <span className={`font-robot text-lg font-semibold tabular-nums ${t.big}`}>
-                                    {formatDuration(estimate.days)}
+                                    {range}
                                 </span>
                                 <span className={`text-[11px] tabular-nums ${t.sub}`}>
-                                    {estimate.perVariant.toLocaleString()} / variant ·{" "}
-                                    {groupCount} arms
+                                    checked daily · {groupCount} arms
                                 </span>
                             </div>
                             <p className={`text-[11px] leading-relaxed ${t.line}`}>
@@ -167,9 +149,9 @@ export default function DecisionEstimator({ groupCount, onSampleSize }: Props) {
             ) : (
                 <div className="mt-0.5 rounded-lg border border-dashed border-stone-200 p-3">
                     <p className="text-[11px] text-stone-400 leading-relaxed">
-                        {perVariant === null
+                        {!(baseline > 0 && baseline < 1)
                             ? "Enter a conversion rate between 0 and 100% to estimate."
-                            : "Add your page's monthly traffic to see how long this test needs to run."}
+                            : "Add your page's monthly traffic to see how long this test is likely to run."}
                     </p>
                 </div>
             )}

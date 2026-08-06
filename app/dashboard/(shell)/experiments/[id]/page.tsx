@@ -17,7 +17,12 @@ import {
 } from "@/lib/experiments";
 import { buildPreviewLink } from "@/lib/preview";
 import { agentActionSummary } from "@/lib/agentSummary";
-import { requiredSampleSizePerVariant, twoProportionZTest } from "@/lib/stats";
+import {
+    compareVariants,
+    requiredSampleSizePerVariant,
+    Comparison,
+    VariantStats,
+} from "@/lib/stats";
 import {
     AgentAction,
     DailyStat,
@@ -111,11 +116,12 @@ function fmtDuration(days: number): string {
 // How much longer until a decision, read off the test's REAL accrual (the
 // slowest arm's own pace, slowest / daysRunning — the exact arm every gate
 // waits on). Two regimes:
-//   - collecting:  time to reach the sample gate the agent won't decide before.
-//   - inconclusive: past the gate but no winner. Project the sample needed to
-//     make the CURRENTLY OBSERVED gap significant (same 95%/80% power), so a
-//     founder who's watched "test continues" for weeks finally gets a real
-//     "keep going vs. give up" number instead of silence.
+//   - collecting:  time to reach the sample floor the agent won't judge before.
+//   - inconclusive: past the floor but no call yet. Project when the CURRENTLY
+//     OBSERVED gap would typically cross the agent's decision bar (classical
+//     power math as a rough ETA — nothing gates on it), so a founder who's
+//     watched "test continues" for weeks gets a real "keep going vs. give up"
+//     number instead of silence.
 // Gated to >=3 days of runtime: you can't read a daily rate off ramp-up, and a
 // founder shouldn't see a wild number on day one.
 type Pace = { perDay: number; daysRemaining: number; basis: "sample" | "significance" };
@@ -309,11 +315,23 @@ function payloadText(payload: VariantPayload): string {
 type Counts = Record<string, { exposures: number; conversions: number }>;
 type Count = { exposures: number; conversions: number };
 
-// The agent won't even run its z-test until every variant clears this many
-// unique visitors (mirrors SAMPLE_FLOOR in app/api/agent/evaluate/route.ts).
-// We use the SAME gate here so the UI's verdict never contradicts the
-// agent's timeline rows below.
+// The agent won't judge until every variant clears this many unique visitors
+// (mirrors SAMPLE_FLOOR in app/api/agent/evaluate/route.ts). We use the SAME
+// gate here so the UI's verdict never contradicts the agent's timeline rows
+// below.
 const SAMPLE_FLOOR = 100;
+
+// Bayesian comparison from raw counts — the identical computation the agent
+// runs, so the page and the timeline can never disagree.
+function compareCounts(controlCounts: Count, variantCounts: Count): Comparison {
+    const toStats = (id: string, c: Count): VariantStats => ({
+        variantId: id,
+        exposures: c.exposures,
+        conversions: c.conversions,
+        rate: c.exposures > 0 ? c.conversions / c.exposures : 0,
+    });
+    return compareVariants(toStats("control", controlCounts), [toStats("variant", variantCounts)])[0];
+}
 
 type Verdict = {
     phase: "collecting" | "inconclusive" | "significant";
@@ -323,8 +341,8 @@ type Verdict = {
     leaderId: string;
     controlRate: number; // observed control conversion rate (fraction)
     lift: number; // relative %, leader vs control
-    confidence: number; // (1 - p) * 100
-    winnerIsControl: boolean; // significant, but the original is ahead
+    confidence: number; // % sure the leading side is genuinely better
+    winnerIsControl: boolean; // decisive, but the original is ahead
 };
 
 // Turn the raw counts into a single honest verdict about the whole test,
@@ -351,21 +369,16 @@ function readVerdict(
     const leader = challengers.reduce((best, v) => (rateOf(v.id) > rateOf(best.id) ? v : best));
     const cCtl = counts[control.id] ?? { exposures: 0, conversions: 0 };
     const cLead = counts[leader.id] ?? { exposures: 0, conversions: 0 };
-    const test = twoProportionZTest(
-        cCtl.conversions,
-        cCtl.exposures,
-        cLead.conversions,
-        cLead.exposures
-    );
-    const pValue = test?.p ?? 1;
+    const cmp = compareCounts(cCtl, cLead);
     const controlRate = rateOf(control.id);
     const lift = controlRate > 0 ? ((rateOf(leader.id) - controlRate) / controlRate) * 100 : 0;
 
     let phase: Verdict["phase"];
     if (slowest < minSample) phase = "collecting";
-    else if (pValue < 0.05) phase = "significant";
+    else if (cmp.verdict !== null) phase = "significant";
     else phase = "inconclusive";
 
+    const winnerIsControl = phase === "significant" && cmp.verdict === "control";
     return {
         phase,
         slowest,
@@ -374,8 +387,10 @@ function readVerdict(
         leaderId: leader.id,
         controlRate,
         lift,
-        confidence: (1 - pValue) * 100,
-        winnerIsControl: phase === "significant" && lift <= 0,
+        // Show the probability of whichever side is ahead: the leader's chance
+        // to beat control, or — when the original holds — control's chance.
+        confidence: (winnerIsControl ? 1 - cmp.chanceToBeat : cmp.chanceToBeat) * 100,
+        winnerIsControl,
     };
 }
 
@@ -489,7 +504,7 @@ function SignificanceBanner({ verdict, pace }: { verdict: Verdict; pace: Pace | 
 
     const confidenceChip = (classes: string, suffix = "") => (
         <span className={`text-[11px] font-medium rounded-full px-2.5 py-1 tabular-nums ${classes}`}>
-            {verdict.confidence.toFixed(0)}% confidence{suffix}
+            {verdict.confidence.toFixed(0)}% sure{suffix}
         </span>
     );
 
@@ -552,7 +567,7 @@ function SignificanceBanner({ verdict, pace }: { verdict: Verdict; pace: Pace | 
             <BannerShell
                 tone={{ border: "border-emerald-200", bg: "bg-emerald-50", chip: "bg-emerald-100 text-emerald-600", title: "text-emerald-900" }}
                 icon={LuTrophy}
-                title={`${verdict.leaderName} is a statistically significant winner`}
+                title={`${verdict.leaderName} is a clear winner`}
                 subtitle={<span className="text-emerald-700">{liftLabel} lift over the original</span>}
                 aside={confidenceChip("text-emerald-700 bg-emerald-100")}
             />
@@ -566,7 +581,7 @@ function SignificanceBanner({ verdict, pace }: { verdict: Verdict; pace: Pace | 
                 tone={{ border: "border-sky-200", bg: "bg-sky-50", chip: "bg-sky-100 text-sky-600", title: "text-sky-900" }}
                 icon={LuShield}
                 title="The original is holding up"
-                subtitle="No variant has significantly beaten it."
+                subtitle="Your agent is confident no variant beats it."
                 aside={confidenceChip("text-sky-700 bg-sky-100")}
             />
         );
@@ -583,7 +598,7 @@ function SignificanceBanner({ verdict, pace }: { verdict: Verdict; pace: Pace | 
             tone={tone}
             icon={LuSearch}
             title="No clear winner yet"
-            subtitle="The difference isn't statistically significant."
+            subtitle="The gap isn't decisive — your agent keeps watching daily."
             aside={confidenceChip(
                 slow ? "text-rose-700 bg-rose-100" : "text-stone-500 bg-stone-100",
                 " · need 95%"
@@ -613,7 +628,8 @@ function SignificanceBanner({ verdict, pace }: { verdict: Verdict; pace: Pace | 
 }
 
 // The small confidence chip under a challenger's conversion rate. Muted gray
-// until the lift is real — never a green number the sample can't back.
+// until the agent's decision rule would actually act on the lift — never a
+// green number the data can't back.
 function variantSignal(
     variant: ExperimentVariant,
     c: Count,
@@ -627,28 +643,28 @@ function variantSignal(
     const controlRate = controlCounts.conversions / controlCounts.exposures;
     const rate = c.conversions / c.exposures;
     const lift = controlRate > 0 ? ((rate - controlRate) / controlRate) * 100 : 0;
-    const test = twoProportionZTest(
-        controlCounts.conversions,
-        controlCounts.exposures,
-        c.conversions,
-        c.exposures
-    );
-    const p = test?.p ?? 1;
+    const cmp = compareCounts(controlCounts, c);
     const enoughSample = slowest >= minSample;
-    const significant = enoughSample && p < 0.05;
+    const decisive = enoughSample && cmp.verdict !== null;
     const liftText = `${lift > 0 ? "+" : ""}${lift.toFixed(1)}% vs control`;
+    const sureText = `${(
+        (cmp.verdict === "control" ? 1 - cmp.chanceToBeat : cmp.chanceToBeat) * 100
+    ).toFixed(0)}% sure`;
 
-    if (significant) {
-        const tone = lift > 0 ? "text-emerald-700 bg-emerald-100" : "text-rose-700 bg-rose-100";
+    if (decisive) {
+        const tone =
+            cmp.verdict === "variant"
+                ? "text-emerald-700 bg-emerald-100"
+                : "text-rose-700 bg-rose-100";
         return (
             <span className={`inline-block text-[10px] font-medium rounded-full px-2 py-0.5 mt-1 ${tone}`}>
-                {liftText} · significant
+                {liftText} · {sureText}
             </span>
         );
     }
     return (
         <span className="inline-block text-[10px] font-medium text-stone-400 bg-stone-100 rounded-full px-2 py-0.5 mt-1">
-            {liftText} · not yet significant
+            {liftText} · not decisive yet
         </span>
     );
 }
@@ -908,7 +924,7 @@ export default function IndividualExperimentPage() {
     }
     const targetLabel = experiment.selector_fallback?.text ?? experiment.original_value;
 
-    // Significance readout, computed from the same z-test + sample gate the
+    // Verdict readout, computed from the same Bayesian rule + sample floor the
     // agent uses, so the cards and the agent timeline can never disagree.
     const minSample = Math.max(SAMPLE_FLOOR, experiment.min_sample_size || 0);
     const verdict = readVerdict(variants, counts, experiment.min_sample_size);
