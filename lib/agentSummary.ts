@@ -39,6 +39,8 @@ export function agentActionSummary(action: AgentAction): string {
         return `No follow-up test drafted — ${d.reason ?? "nothing worth proposing"}`;
     if (action.action === "proposal_failed")
         return `Couldn't draft a follow-up test (${d.message ?? "unknown error"}) — the evaluation itself was unaffected`;
+    if (action.action === "analytics_sync_failed")
+        return `Couldn't sync your PostHog data (${d.message ?? "unknown error"}) — the agent used the previous day's numbers instead. Check the connection in Settings`;
     if (action.action === "email_sent") return `Emailed you: "${d.subject ?? "notification"}"`;
     if (action.action === "email_failed")
         return `Couldn't send the email "${d.subject ?? "notification"}" (${d.reason ?? "unknown"})`;

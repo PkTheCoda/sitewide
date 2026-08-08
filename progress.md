@@ -82,12 +82,24 @@
 - [ ] Bot filtering v2 (only if the data asks for it): `bot_reason` column for retroactive re-analysis, SRM guardrail in the agent, "X% of traffic filtered" on the experiment page, datacenter-IP ranges
 - [ ] Playwright/Browserless variant preview render
 
+### 2.4 PostHog integration (built 2026-08-06, pre-pilot)
+Read-only analytics context for the agent — every pilot founder is on PostHog. Personal API key (`query:read` scope) + project ID + region, no OAuth. **Agent context only: never a dashboard, never an experiment metric** (self-tracked events stay the sole source of truth for results).
+- [x] Migration `20260806_posthog_integration.sql`: `integrations` (RLS on, ZERO policies — the api_key is server-only by construction) + `analytics_snapshots` (one JSONB blob per site per day, owner-read RLS)
+- [x] `lib/posthog.ts` — Query API client (HogQL, plain fetch): sequential queries (3-concurrent project cap), explicit LIMIT everywhere (default is a silent 100 rows), per-query try/catch → partial snapshots, ingestion-host normalization (`us.i.posthog.com` → `us.posthog.com`), 401/403/404 mapped to human messages (404 = wrong region, the predicted #1 support ticket)
+- [x] `app/api/integrations/posthog` — connect (validate via `SELECT 1` + first snapshot inline) / sanitized status / disconnect; own-token auth like report-delete; key never returned
+- [x] Settings → Integrations card (`IntegrationsCard.tsx`): region/project/key form with least-privilege instructions, connected row with sync status, two-click disconnect
+- [x] `/api/agent/sync-analytics` daily cron 08:00 UTC (the spare Hobby slot; evaluate at 09:00 reads fresh data) — per-site best-effort, failures → `integrations.status='error'` + `analytics_sync_failed` agent_actions row
+- [x] Consumers: `propose.ts` (`page_analytics` in context + prompt rule to cite real numbers), analyze-page edge fn (server-side lookup → ANALYTICS CONTEXT prompt block; never trusts the invoke body), DecisionEstimator (monthly-visitors prefill from real traffic + "Prefilled from your PostHog" chip)
+- [x] `scripts/test-posthog.ts` — 18 pure checks (host/path normalization, summarize math) + optional live layer against a real project (`POSTHOG_TEST_*` env vars)
+- [x] Frontend surfaces (2026-08-06, same day): `PostHogConnectForm` extracted and shared between Settings and a new OPTIONAL onboarding step (after snippet install, own progress dot, fully skippable — `?preview=posthog` works in dev); Analytics tab placeholder replaced with `AnalyticsSection` — a read-only "what your agent knows" view of the latest snapshot (totals, top pages, devices, sources, events). Deliberately NOT an analytics product: no charts, no date pickers, no filters — it exists so founders can see and trust the agent's context, with an explicit "want analytics? that's what PostHog is for" line
+- [ ] Verify live against a real PostHog project (results array shape confirmed empirically)
+- [ ] GA4 connector (later — PostHog covers the current ICP; GA4 skews enterprise)
+
 ---
 
 ## Phase 3 — Polish + Launch
 
-- [ ] Improved GA OAuth flow
-- [ ] PostHog integration (secondary analytics)
+- [ ] GA4 connector (demoted — see 2.4; PostHog is primary now)
 - [ ] Prompt engineering iteration
 - [ ] Onboarding improvements
 - [ ] Landing page
@@ -119,3 +131,5 @@
 | 2026-07-20 | Surface significance as a verdict banner + muted per-variant chip, never a bare green lift, gated on the agent's own z-test + `SAMPLE_FLOOR` | Two raw conversion rates side-by-side at ~50–80 visitors read as a result the sample can't back — single biggest pre-pilot credibility risk. Sharing the agent's math keeps UI and timeline consistent |
 | 2026-07-20 | Single-report delete goes through a service-role API route (like account delete), not client SQL | Reports don't cascade comments and Storage screenshots aren't touched by SQL; the admin route is the only place that can clean all three. Experiments intentionally survive with `report_id → null` |
 | 2026-07-29 | Bayesian sequential stats (chanceToBeat ≥95% + expected loss ≤0.05% of control's rate) replace the fixed-horizon z-test; impact preset deleted from builder; `min_sample_size` demoted to a 500/arm flake-guard floor | Founders couldn't answer "expected impact", and the power-analysis gate made every test wait ~5k+/arm regardless of how decisive the data was. The risk-capped sequential rule is honest under the agent's daily checks (Monte Carlo verified: A/A false promotions ~6%/40 peeks at ≤0.05% cost each; +50% lift resolves median day ~7, +25% median ~19 at 150/arm/day) |
+| 2026-08-06 | PostHog first, GA4 later (reverses 2026-06-06 "GA over PostHog") | ICP evidence from pilot conversations: every pilot founder uses PostHog; GA4 skews enterprise. PostHog also needs no OAuth (personal API key + `query:read` scope), vs the GA OAuth flow that's been stuck in "later" since June |
+| 2026-08-06 | Analytics = agent context only, synced daily into one JSONB snapshot per site | The anti-scope-creep rule holds: no charts, no analytics tab, never an experiment denominator (visitor-ID mismatch would corrupt the stats). Data feeds three prompts/prefills: analyze-page, propose, DecisionEstimator |

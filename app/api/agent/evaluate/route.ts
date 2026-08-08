@@ -105,7 +105,9 @@ async function runEvaluation(request: Request) {
     }
 
     // Mondays: the weekly digest rides the same cron run (Hobby allows only
-    // two cron jobs — the spare slot stays spare). Guarded to once per day.
+    // two cron jobs — the second slot now belongs to /api/agent/sync-analytics,
+    // which runs at 08:00 so this 09:00 run reads fresh PostHog snapshots).
+    // Guarded to once per day.
     let digest = null;
     if (new Date().getUTCDay() === 1) {
         digest = await sendWeeklyDigests(supabase);

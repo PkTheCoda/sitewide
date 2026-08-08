@@ -9,6 +9,7 @@ import { analyzeUrl, getComments, getReport } from "@/lib/reports";
 import { ensureSite, getSites } from "@/lib/experiments";
 import { Comment, Report, Site } from "@/lib/types";
 import SnippetInstructions from "@/components/dashboard/SnippetInstructions";
+import PostHogConnectForm from "@/components/dashboard/PostHogConnectForm";
 import {
     LuArrowLeft,
     LuCamera,
@@ -35,6 +36,8 @@ import logo from "@/public/assets/sitewide-logo-v7.svg";
 //   analyzing → the wow moment: the agent reads their page while they watch
 //   reveal    → "we found N things worth testing" + the top finding
 //   snippet   → install + live verification (skippable — never force a drop)
+//   posthog   → optional analytics connect (every pilot founder uses PostHog;
+//               the agent grounds its suggestions in real traffic when present)
 //
 // Routing contract (the rest lives in ProtectedRoute / the dashboard shell):
 //   not signed in            → /signin
@@ -44,7 +47,7 @@ import logo from "@/public/assets/sitewide-logo-v7.svg";
 // State survives refreshes via user metadata: answers are saved per step, and
 // a finished analysis stores its report_id so we never bill a second crawl.
 
-type Step = "intro" | "site" | "analyzing" | "reveal" | "snippet";
+type Step = "intro" | "site" | "analyzing" | "reveal" | "snippet" | "posthog";
 
 const SOURCES = ["X / Twitter", "Reddit", "A friend or referral", "Search", "Somewhere else"];
 const TRAFFIC_BANDS = ["Under 5k", "5k – 20k", "20k – 100k", "100k+"];
@@ -75,6 +78,7 @@ const STEP_LABELS: { key: Step[]; label: string }[] = [
     { key: ["site"], label: "Your site" },
     { key: ["analyzing", "reveal"], label: "Analysis" },
     { key: ["snippet"], label: "Install" },
+    { key: ["posthog"], label: "Analytics" },
 ];
 
 const IMPACT_RANK: Record<string, number> = { High: 3, Medium: 2, Low: 1 };
@@ -136,6 +140,7 @@ export default function OnboardingPage() {
     const [comments, setComments] = useState<Comment[]>([]);
     const [site, setSite] = useState<Site | null>(null);
     const [verified, setVerified] = useState(false);
+    const [posthogConnected, setPosthogConnected] = useState(false);
     const [finishing, setFinishing] = useState(false);
     const [preview, setPreview] = useState(false);
     const hydrated = useRef(false);
@@ -145,7 +150,7 @@ export default function OnboardingPage() {
         if (!PREVIEW_ENABLED) return;
         const params = new URLSearchParams(window.location.search);
         const target = params.get("preview") as Step | null;
-        if (!target || !["intro", "site", "analyzing", "reveal", "snippet"].includes(target)) return;
+        if (!target || !["intro", "site", "analyzing", "reveal", "snippet", "posthog"].includes(target)) return;
         setPreview(true);
         hydrated.current = true; // block the metadata resume from moving the step
         setSiteUrl("https://yourstartup.com");
@@ -656,16 +661,59 @@ export default function OnboardingPage() {
 
                         <Footer
                             onBack={() => setStep(report ? "reveal" : "site")}
-                            onContinue={() => finish()}
-                            continueLabel={verified ? "Finish — see my report" : "See my report"}
+                            onContinue={() => setStep("posthog")}
+                            continueLabel="Continue"
                             secondaryLabel={verified ? undefined : "Skip for now"}
-                            onSecondary={verified ? undefined : () => finish()}
+                            onSecondary={verified ? undefined : () => setStep("posthog")}
+                        />
+                    </>
+                )}
+
+                {/* ── Step: posthog (optional) ───────────────────────────── */}
+                {step === "posthog" && (
+                    <>
+                        <div className="flex flex-col gap-1.5">
+                            <h1 className="two-title font-semibold tracking-tight text-stone-900">
+                                Use PostHog? Connect it.
+                            </h1>
+                            <p className="text-stone-500 text-sm">
+                                Optional, read-only, takes a minute. Your agent grounds its
+                                suggestions in your real traffic — which pages matter, mobile vs
+                                desktop, where visitors come from. You can always do this later
+                                from Settings.
+                            </p>
+                        </div>
+
+                        {site && !posthogConnected ? (
+                            <PostHogConnectForm
+                                sites={[{ id: site.id, domain: site.domain }]}
+                                onConnected={() => setPosthogConnected(true)}
+                            />
+                        ) : posthogConnected ? (
+                            <div className="flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                                <LuCheck className="size-4 shrink-0" />
+                                <span className="font-medium">
+                                    PostHog connected — your agent reads your traffic from here on.
+                                </span>
+                            </div>
+                        ) : (
+                            <p className="text-xs text-stone-400">
+                                You can connect PostHog anytime from Settings → Integrations.
+                            </p>
+                        )}
+
+                        <Footer
+                            onBack={() => setStep("snippet")}
+                            onContinue={() => finish()}
+                            continueLabel="Finish — see my report"
+                            secondaryLabel={posthogConnected ? undefined : "Skip for now"}
+                            onSecondary={posthogConnected ? undefined : () => finish()}
                             continueDisabled={finishing}
                         />
                     </>
                 )}
             </div>
-            
+
         </div>
     );
 }

@@ -1,5 +1,5 @@
-import PlaceholderSection from "@/components/dashboard/PlaceholderSection"
+import AnalyticsSection from "@/components/dashboard/AnalyticsSection"
 
 export default function DashboardAnalyticsPage() {
-  return <PlaceholderSection title="Analytics" />
+  return <AnalyticsSection />
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DECISION_FLOOR, estimateTimeToDecision } from "@/lib/stats";
 
 // The "will this test ever finish?" reality check, shown as the last builder
@@ -18,6 +18,11 @@ import { DECISION_FLOOR, estimateTimeToDecision } from "@/lib/stats";
 
 type Props = {
     groupCount: number; // control + variants (splitting traffic more ways = slower)
+    // Real traffic for this page from the founder's PostHog snapshot (visitors
+    // over the last 30 days ≈ monthly). Seeds the visitors input — founders
+    // couldn't answer "monthly visitors" from memory, which is why this
+    // integration exists. Typing over it always wins.
+    prefill?: { monthlyVisitors: number } | null;
 };
 
 // The bracket: +50% relative lift ("a redesign that works") to +25% ("a
@@ -63,9 +68,20 @@ const TONE: Record<string, { panel: string; big: string; sub: string; line: stri
     },
 };
 
-export default function DecisionEstimator({ groupCount }: Props) {
+export default function DecisionEstimator({ groupCount, prefill }: Props) {
     const [monthlyVisitors, setMonthlyVisitors] = useState("");
     const [baselinePct, setBaselinePct] = useState("5");
+    // Once the founder touches the visitors field it's theirs — the prefill
+    // never overwrites it again (not even if they clear it).
+    const [visitorsDirty, setVisitorsDirty] = useState(false);
+
+    useEffect(() => {
+        if (!visitorsDirty && prefill && prefill.monthlyVisitors > 0) {
+            setMonthlyVisitors(String(prefill.monthlyVisitors));
+        }
+    }, [prefill, visitorsDirty]);
+    const prefillApplied =
+        !visitorsDirty && !!prefill && String(prefill.monthlyVisitors) === monthlyVisitors;
 
     const baseline = parseFloat(baselinePct) / 100;
     const monthly = parseFloat(monthlyVisitors);
@@ -94,7 +110,10 @@ export default function DecisionEstimator({ groupCount }: Props) {
                         inputMode="numeric"
                         min={0}
                         value={monthlyVisitors}
-                        onChange={(e) => setMonthlyVisitors(e.target.value)}
+                        onChange={(e) => {
+                            setVisitorsDirty(true);
+                            setMonthlyVisitors(e.target.value);
+                        }}
                         placeholder="e.g. 15,000"
                         className="text-xs text-stone-700 bg-stone-50 border border-stone-200 rounded-lg py-2 px-3 focus:outline-none focus:border-orange-600 placeholder:text-stone-400"
                     />
@@ -118,6 +137,13 @@ export default function DecisionEstimator({ groupCount }: Props) {
                     </div>
                 </label>
             </div>
+
+            {prefillApplied && (
+                <p className="text-[11px] text-stone-400">
+                    Prefilled from your PostHog — ~
+                    {prefill!.monthlyVisitors.toLocaleString()} visitors/month on this page.
+                </p>
+            )}
 
             {/* Live readout */}
             {fastDays !== null && slowDays !== null ? (

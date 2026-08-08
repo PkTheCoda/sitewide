@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/services/context/authContext";
-import { createExperiment } from "@/lib/experiments";
+import { createExperiment, getLatestSnapshotForUrl } from "@/lib/experiments";
 import { DECISION_FLOOR } from "@/lib/stats";
 import {
     ChangeType,
@@ -16,6 +16,7 @@ import {
 import VariantFields, { isValidImageUrl } from "./VariantFields";
 import GoalSection from "./GoalSection";
 import DecisionEstimator from "./DecisionEstimator";
+import { summarizeForPath } from "@/lib/analytics";
 import PreviewLinks from "./PreviewLinks";
 import { Hint, Segmented, StepCard } from "./ui";
 import { buildPreviewLink } from "@/lib/preview";
@@ -89,6 +90,22 @@ export default function BuilderSidebar({
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [createdId, setCreatedId] = useState<string | null>(null);
+
+    // Real traffic for this page (founder's PostHog snapshot, if connected) —
+    // seeds the estimator's "monthly visitors" input so the founder doesn't
+    // have to guess it. Null (no integration/snapshot) = today's behavior.
+    const [pageVisitors, setPageVisitors] = useState<number | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        getLatestSnapshotForUrl(report.url).then((snapshot) => {
+            if (cancelled || !snapshot) return;
+            const ctx = summarizeForPath(snapshot.payload, report.url);
+            if (ctx && ctx.page_visitors > 0) setPageVisitors(ctx.page_visitors);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [report.url]);
 
     // Keep the change type valid for the selected element kind.
     useEffect(() => {
@@ -479,6 +496,7 @@ export default function BuilderSidebar({
                     >
                         <DecisionEstimator
                             groupCount={Math.max(variantPayloads.length, 1) + 1}
+                            prefill={pageVisitors !== null ? { monthlyVisitors: pageVisitors } : null}
                         />
                     </StepCard>
                 </div>

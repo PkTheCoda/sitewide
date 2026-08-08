@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { DECISION_FLOOR } from "@/lib/stats";
-import { Comment, PageElement } from "@/lib/types";
+import { summarizeForPath } from "@/lib/analytics";
+import { AnalyticsPayload, Comment, PageElement } from "@/lib/types";
 
 // ─── The "closing the loop" step ────────────────────────────────────────────
 //
@@ -61,7 +62,8 @@ Rules:
 - Prefer findings where has_markup is false (their elements can be swapped cleanly).
 - Never propose a finding whose element was already tested.
 - variants: 1 to ${MAX_VARIANTS} complete replacements for the element's current text. Each must clearly differ from the original. Match the page's voice; be concrete and benefit-led, not clever.
-- rationale is read by the founder on their dashboard. Write it to them directly ("Your headline test showed…"), 1-3 sentences, no fluff.`;
+- rationale is read by the founder on their dashboard. Write it to them directly ("Your headline test showed…"), 1-3 sentences, no fluff.
+- When page_analytics is present, it is the founder's REAL traffic (synced from their PostHog). Weight your choice by it: a mobile-heavy audience favors findings visible above the fold; the referrer/UTM mix tells you what visitors expect to see; a low-traffic page favors findings on high-baseline elements the test can actually resolve. When the data influenced your pick, cite the concrete number in the rationale ("68% of your visitors are on mobile…"). Never invent analytics numbers — if page_analytics is absent, say nothing about traffic.`;
 
 type ProposeResult =
     | { proposed: true; experiment_id: string; name: string }
@@ -121,15 +123,27 @@ export async function proposeNextExperiment(
         }
     }
 
-    const [{ data: report }, { data: comments }, { data: siblings }] = await Promise.all([
-        supabase.from("reports").select("url, elements").eq("id", exp.report_id).single(),
-        supabase.from("comments").select("*").eq("report_id", exp.report_id),
-        supabase
-            .from("experiments")
-            .select("selector, source_comment_id")
-            .eq("user_id", exp.user_id)
-            .eq("report_id", exp.report_id),
-    ]);
+    const [{ data: report }, { data: comments }, { data: siblings }, { data: snapshot }] =
+        await Promise.all([
+            supabase.from("reports").select("url, elements").eq("id", exp.report_id).single(),
+            supabase.from("comments").select("*").eq("report_id", exp.report_id),
+            supabase
+                .from("experiments")
+                .select("selector, source_comment_id")
+                .eq("user_id", exp.user_id)
+                .eq("report_id", exp.report_id),
+            // Latest PostHog snapshot for the experiment's site — optional
+            // context; null (no integration / no site) changes nothing.
+            exp.site_id
+                ? supabase
+                      .from("analytics_snapshots")
+                      .select("payload")
+                      .eq("site_id", exp.site_id)
+                      .order("captured_at", { ascending: false })
+                      .limit(1)
+                      .maybeSingle()
+                : Promise.resolve({ data: null }),
+        ]);
     if (!report?.elements || !comments || comments.length === 0) {
         return { proposed: false, reason: "no findings available on this report" };
     }
@@ -152,8 +166,12 @@ export async function proposeNextExperiment(
     }
 
     // ── 3. Ask Claude ─────────────────────────────────────────────────────────
+    const pageAnalytics = snapshot?.payload
+        ? summarizeForPath(snapshot.payload as AnalyticsPayload, exp.page_url)
+        : null;
     const context = {
         page_url: exp.page_url,
+        ...(pageAnalytics ? { page_analytics: pageAnalytics } : {}),
         finished_experiment: {
             name: exp.name,
             hypothesis: exp.hypothesis,

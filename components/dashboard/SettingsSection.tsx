@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/services/context/authContext";
 import { signOut, updateDisplayName, updateEmail, updatePassword } from "@/services/auth";
 import { supabase } from "@/lib/supabaseClient";
+import IntegrationsCard from "@/components/dashboard/IntegrationsCard";
 import { LuLoaderCircle, LuLogOut, LuTriangleAlert } from "react-icons/lu";
 
 type Status = { type: "success" | "error"; message: string } | null;
@@ -248,6 +249,9 @@ export default function SettingsSection() {
                     {savingPassword ? "Updating…" : "Update password"}
                 </button>
             </div>
+
+            {/* Integrations */}
+            <IntegrationsCard />
 
             {/* Account */}
             <div className="flex items-center justify-between bg-stone-50 border border-stone-200 rounded-xl p-6 shadow-xs">

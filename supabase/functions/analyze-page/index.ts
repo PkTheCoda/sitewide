@@ -329,6 +329,75 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// ── Analytics context (PostHog) ──────────────────────────────────────────────
+// If the page's owner has a PostHog integration, the daily sync leaves an
+// analytics_snapshots row for the site; we fold the page-relevant slice into
+// the prompt so findings are grounded in real traffic. Inlined mirror of
+// lib/analytics.ts → normalizePath/summarizeForPath (edge functions can't
+// import from lib/). Strictly optional: any miss or error → empty string, the
+// pipeline behaves exactly as before.
+
+function normalizePath(urlOrPath: string): string {
+  let path = urlOrPath.trim();
+  try {
+    if (/^https?:\/\//i.test(path)) path = new URL(path).pathname;
+  } catch { /* fall through with the raw string */ }
+  path = path.split('?')[0].split('#')[0];
+  if (!path.startsWith('/')) path = `/${path}`;
+  if (path.length > 1) path = path.replace(/\/+$/, '');
+  return path;
+}
+
+async function buildAnalyticsSection(
+  supabase: any,
+  url: string,
+  user_id: string | null | undefined,
+  report_id: string | number | null | undefined,
+): Promise<string> {
+  try {
+    // The invoke body is client-controllable, so analytics are ALWAYS looked
+    // up server-side from the owner's own rows — never accepted from the request.
+    let owner = user_id ?? null;
+    if (!owner && report_id) {
+      const { data } = await supabase.from('reports').select('user_id').eq('id', report_id).single();
+      owner = data?.user_id ?? null;
+    }
+    if (!owner) return '';
+
+    const hostname = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`).hostname;
+    const { data: site } = await supabase
+      .from('sites').select('id').eq('user_id', owner).eq('domain', hostname).maybeSingle();
+    if (!site) return '';
+
+    const { data: snap } = await supabase
+      .from('analytics_snapshots').select('payload').eq('site_id', site.id)
+      .order('captured_at', { ascending: false }).limit(1).maybeSingle();
+    const payload = snap?.payload;
+    if (!payload?.pages?.length) return '';
+
+    const path = normalizePath(url);
+    const page = payload.pages.find((p: any) => normalizePath(p.path) === path);
+    if (!page || !page.pageviews) return '';
+
+    const pct = (n: number) => `${Math.round(n * 100)}%`;
+    const share = payload.total_pageviews > 0 ? ` (${pct(page.pageviews / payload.total_pageviews)} of site traffic)` : '';
+    const devices = Object.entries(payload.devices ?? {})
+      .map(([d, f]) => `${d} ${pct(f as number)}`).join(', ');
+    const referrers = (payload.referrers ?? []).slice(0, 5)
+      .map((r: any) => `${r.domain} (${r.visitors} visitors)`).join(', ');
+    const utms = (payload.utm_sources ?? []).slice(0, 5)
+      .map((u: any) => `${u.source} (${u.visitors})`).join(', ');
+
+    return `
+ANALYTICS CONTEXT — the founder's REAL traffic, last ${payload.window_days} days, synced from their PostHog:
+- This page: ${page.pageviews} pageviews from ${page.visitors} unique visitors${share}.
+${devices ? `- Devices: ${devices}.\n` : ''}${referrers ? `- Top referrers: ${referrers}.\n` : ''}${utms ? `- UTM sources: ${utms}.\n` : ''}Use this to prioritize. A mobile-heavy audience makes above-the-fold copy and CTA placement weightier. The referrer and UTM mix tells you what visitors arrive expecting — flag mismatches between that expectation and the page's message. Cite a concrete number in why_it_matters when it strengthens the case. Never invent analytics numbers beyond what is listed here.
+`;
+  } catch {
+    return '';
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -425,6 +494,9 @@ Deno.serve(async (req) => {
 
     // ── Step 4: Claude analysis ────────────────────────────────────────────
 
+    const analyticsSection = await buildAnalyticsSection(supabase, url, user_id, report_id);
+    if (analyticsSection) console.log('Analytics context attached (PostHog snapshot found)');
+
     const prompt = `You are a senior conversion rate optimization (CRO) strategist. A startup founder needs to know why their landing page isn't converting visitors into customers.
 
 YOUR ONLY JOB: Find what is stopping visitors from signing up, starting a trial, or clicking the CTA.
@@ -435,7 +507,7 @@ TONE RULE: Read the page copy carefully and identify the industry, audience, and
 
 PAGE TEXT:
 ${pageText}
-
+${analyticsSection}
 SECTIONS: ${Object.keys(sections).join(', ') || 'none detected'}
 
 KEY ELEMENTS (reference by numeric id only):

@@ -5,6 +5,8 @@
 //    ├── reports        "I analyzed this URL once"        (user_id)
 //    │    └── comments  "AI found these issues"           (report_id)
 //    ├── sites          "I own this domain"               (user_id)
+//    │    ├── integrations         "my PostHog connection"  (site_id, user_id — RLS: NO policies, server-only)
+//    │    └── analytics_snapshots  "yesterday's traffic"    (site_id — read-only to clients)
 //    └── experiments    "I'm running this A/B test"       (user_id, report_id, site_id)
 //         ├── experiment_variants  "the versions"         (experiment_id)
 //         ├── experiment_events    "who saw/clicked what" (experiment_id, variant_id)
@@ -135,6 +137,45 @@ export type Site = {
     created_at: string;
 };
 
+// A founder's PostHog connection as the DASHBOARD sees it — the sanitized
+// shape returned by GET /api/integrations/posthog. The real table row also
+// carries api_key, which never leaves the server (the table has RLS enabled
+// with zero policies, so clients can't even select from it).
+export type Integration = {
+    id: string;
+    site_id: string;
+    provider: "posthog";
+    host: string;
+    project_id: string;
+    status: "connected" | "error";
+    last_synced_at: string | null;
+    last_error: string | null;
+    created_at: string;
+};
+
+// One day's distilled PostHog traffic for a site (last 30 days at capture
+// time). Written only by the sync cron; read as one blob by the analysis
+// prompt, the proposal agent, and the builder's estimator. Deliberately
+// aggregate-only — this is agent context, not an analytics product.
+export type AnalyticsPayload = {
+    window_days: number;
+    pages: { path: string; pageviews: number; visitors: number }[];
+    devices: Record<string, number>; // fraction of pageviews, e.g. { Desktop: 0.61 }
+    referrers: { domain: string; visitors: number }[];
+    utm_sources: { source: string; visitors: number }[];
+    top_events: { event: string; count: number }[];
+    total_pageviews: number;
+    total_visitors: number;
+};
+
+export type AnalyticsSnapshot = {
+    id: string;
+    site_id: string;
+    captured_at: string; // "YYYY-MM-DD"
+    payload: AnalyticsPayload;
+    created_at: string;
+};
+
 // One A/B test. Points three ways:
 //   report_id — which analysis it was built from (null if that report is deleted)
 //   site_id   — which domain serves it (null until first activation)
@@ -237,6 +278,7 @@ export type AgentAction = {
         | "email_sent"
         | "email_failed"
         | "digest_sent" // experiment_id null — one row per founder digest
+        | "analytics_sync_failed" // experiment_id null — a site's PostHog sync errored
         | "run_started"
         | "run_finished"
         | "error";

@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabaseClient";
 import {
+    AnalyticsSnapshot,
     ChangeType,
     DailySeries,
     DailyStat,
@@ -429,6 +430,35 @@ export async function ensureSite(user_id: string, page_url: string) {
         return { error: error.message };
     }
     return created as Site;
+}
+
+// Latest PostHog snapshot for the site owning this page URL — RLS returns
+// only the caller's own sites/snapshots. Null on any miss (no site, no
+// integration, no snapshot yet): callers fall back to no-analytics behavior.
+export async function getLatestSnapshotForUrl(
+    page_url: string
+): Promise<AnalyticsSnapshot | null> {
+    let domain: string;
+    try {
+        domain = new URL(/^https?:\/\//i.test(page_url) ? page_url : `https://${page_url}`).hostname;
+    } catch {
+        return null;
+    }
+    const { data: site } = await supabase
+        .from("sites")
+        .select("id")
+        .eq("domain", domain)
+        .limit(1)
+        .maybeSingle();
+    if (!site) return null;
+    const { data: snapshot } = await supabase
+        .from("analytics_snapshots")
+        .select("*")
+        .eq("site_id", site.id)
+        .order("captured_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    return (snapshot as AnalyticsSnapshot) ?? null;
 }
 
 // the user's sites — powers the snippet-health chip (snippet_last_seen_at is

@@ -1,6 +1,6 @@
 # Roadmap — path to pilots
 
-_Last updated: 2026-07-17. Read `agent_loop.md` for the agent lifecycle, `progress.md` for build state._
+_Last updated: 2026-08-06. Read `agent_loop.md` for the agent lifecycle, `progress.md` for build state._
 
 ## Where we are
 
@@ -28,13 +28,37 @@ The agent's work is invisible unless the founder opens the dashboard. The digest
 - [ ] Weekly email per user: each running experiment's variants + rates + lift + agent's current read; decisions made this week (promoted / killed / paused); the proposed next experiment with one-click Activate link.
 - [ ] Powered by `agent_actions` + live stats — mostly a rendering job. Cron on the same daily runner (send on Mondays) or separate route.
 
+## Phase 3 — Felt agency (added 2026-08-06; first design partner lands 2026-08-09)
+
+PostHog integration SHIPPED 2026-08-06 (see progress.md 2.4): read-only connect, daily snapshot sync, analytics context in analyze/propose/estimator, Analytics tab viewer, optional onboarding step. It makes the agent SMARTER (grounded in real traffic). This phase makes it FELT — a design partner should experience an agent that acts, notices, and heals without being asked. Ranked by (impact before the 9th) ÷ effort:
+
+### Sprint: before the design partner (Aug 6–8)
+
+1. **Live-verify PostHog end-to-end** (~1h, founder + Claude). Founder connects his real PostHog in Settings → Analytics tab shows real numbers (this empirically proves the query-response parsing, the one docs-unverifiable piece) → run an analysis on the connected domain → edge logs show `Analytics context attached`, comments cite traffic → builder estimator prefills. Fix whatever this shakes out.
+2. **Data-integrity guards** (already on this roadmap as "before real traffic" — a design partner IS real traffic; wrong numbers in week one kill more trust than any missing feature):
+   - [ ] Wipe talem.org test events (one-time script in scripts/).
+   - [ ] Domain check on snippet config (any domain with a site id currently runs experiments, incl. Vercel previews — a design partner's preview deploys would pollute their data).
+   - [ ] Rate limiting on `/api/snippet/event` (nice-to-have this week, required before any public launch).
+3. **Agent queues the first test during onboarding** (~half day). After the onboarding analysis completes, auto-draft the top finding as a ready-to-activate experiment (`created_by: 'agent'`, same validation path as propose). The reveal step says "your agent already queued your first test — approve it when you install the snippet." Closes the suggest→queue loop in the founder's FIRST session instead of after their first completed experiment. Reuses: propose's draft-writing + the builder's selector lifting; one-pending-draft guardrail already exists.
+
+### Week one of the pilot (Aug 10+)
+
+4. **Proactive page-noticing** (~1 day). The snapshot knows the site's top pages; the DB knows which pages have reports/experiments. Weekly (digest run): find the highest-traffic page with zero experiments and no recent analysis → digest line + optional agent-drafted analysis: "Your /pricing gets 4,100 visitors/mo and has never been tested." First place the agent takes INITIATIVE rather than reacting — and it's cheap because sync + digest infra both exist.
+5. **Proposal context upgrade** (item 5 below, ~prompt-only). Full completed-experiment history for the site in the propose prompt — the agent visibly "learns" across tests, which is exactly what a design partner watches for.
+6. **Selector self-healing** (multi-day — the moat). Agent detects + pauses today; build the loop: `paused_broken` → re-crawl the page (existing Browserless path) → re-match the element by stored `fallback {tag, text}` → update selector → resume + email "I fixed it myself." No cheap competitor will build this; GrowthBook won't either (no crawler). Fast-follow slot until now — promoted, post-pilot-start.
+
+### Explicitly NOT for this sprint
+- Beta access gate (design partner is invited by hand; gate matters before any public link).
+- Code experiments API (pull forward only if the design partner asks).
+- New PostHog-derived features beyond the above (no dashboards — standing rule).
+
 ## Path to pilots (decided 2026-07-18) — founder owns design, Claude owns functionality
 
 Beta MVP = invite-only: founder controls who joins and onboards; launch timing is free.
 
 ### Functionality track (Claude), in order
 
-1. **Email via Resend** — SHIPPED 2026-07-18, dormant until founder adds `RESEND_API_KEY` (+ verifies a sending domain, sets `EMAIL_FROM`). Until then every attempted send logs `email_failed`/`digest_sent {sent:false, reason}` — visible, not silent.
+1. **Email via Resend** — SHIPPED 2026-07-18, **LIVE 2026-08** (`RESEND_API_KEY` in Vercel; founder receives per-decision emails + weekly digest).
    - Weekly Monday digest per founder: running experiments w/ per-variant numbers + the agent's read, decisions made that week, pending proposal w/ Activate deep-link.
    - Event-driven emails the moment they happen (rare by construction): winner promoted, all variants killed, experiment paused (broken selector). No second scheduled email — quiet weeks stay quiet.
    - Agent-error alert to the founder (heartbeat exists; now someone gets told).
@@ -73,7 +97,7 @@ can't express my test" objection for the React-heavy SaaS ICP, cheaply.
 - Form-submit goal (submit listener; SaaS signups are forms).
 - Funnel-step goals — experiment-scoped ordered path list w/ per-variant drop-off. NEVER full-site funnel analytics (that's the competitors' cost structure, not ours).
 - Multi-element variants (headline + CTA together), split-URL/redirect tests.
-- Selector self-healing (agent detects+pauses today; auto re-crawl/re-match later).
+- ~~Selector self-healing~~ — promoted to Phase 3 item 6 (2026-08-06).
 
 ### Explicitly NOT building now
 
@@ -84,7 +108,7 @@ can't express my test" objection for the React-heavy SaaS ICP, cheaply.
 
 ## Standing constraints
 
-- **Statistical honesty:** fixed-horizon win decisions, min-sample gate, no naive live p-value stopping. Harm-only early stops use stricter α.
+- **Statistical honesty:** Bayesian sequential rule since 2026-07-29 (chanceToBeat ≥95% AND expected loss ≤0.05% of control's rate — safe under daily peeking), `DECISION_FLOOR` 500/arm flake guard. Harm-only early stops use stricter thresholds.
 - **Anti-scope-creep:** NO heatmaps, general funnels, or general analytics. Experiment-scoped tracking is the structural cost advantage vs Humblytics.
 - **Claude proposes; it never activates.** Founder approves every agent-drafted experiment.
 - **Vercel Hobby cron limits:** max 2 crons, max once daily, ±1h timing precision.
