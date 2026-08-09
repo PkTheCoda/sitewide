@@ -112,18 +112,88 @@ const EXTRACT_SCRIPT = `
 export default async function({ page, context }) {
   const { url } = context;
 
-  await page.setViewport({ width: 1440, height: 900 });
+  await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
   await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+  // Re-assert after navigation: report #48 (upahead) captured an entire
+  // session at Puppeteer's 800x600 default because the first setViewport
+  // silently didn't stick — belt and braces, this call is free.
+  await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
+
+  // Normalize pages that break the coordinate space or the scroll loop:
+  // 1. CSS zoom on html/body desyncs getBoundingClientRect from the captured
+  //    pixels (Chrome 128+ zoomed coordinate reporting) — force it to 1.
+  // 2. Scroll-hijacking pages (report #47, slashy.com): html/body (and often
+  //    a wrapper div) pinned to position:fixed / overflow:hidden at exactly
+  //    one viewport tall, with the real 10k-px content clipped inside and
+  //    scrolled via JS transforms. scrollHeight reports 900, the lazy-load
+  //    scroll no-ops, and fullPage captures a single mostly-blank viewport.
+  //    Detection is by SYMPTOM (window can't scroll but rendered content is
+  //    taller than the viewport), so it also catches the inner-scrollbox
+  //    variant. Unlock: make html/body and any viewport-sized clipping
+  //    direct children of body flow normally so the document grows to its
+  //    real height and window scrolling works.
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = '1';
+    if (document.body) document.body.style.zoom = '1';
+
+    const winScrolls =
+      (document.scrollingElement || document.documentElement).scrollHeight >
+      window.innerHeight * 1.2;
+    if (winScrolls) return;
+
+    // Real content height = the lowest rendered pixel of anything in body,
+    // and the tallest element (the content column, usually <main>) whose
+    // ancestor chain is doing the clipping.
+    let contentBottom = 0;
+    let tallest = document.body;
+    for (const el of document.querySelectorAll('body *')) {
+      const r = el.getBoundingClientRect();
+      const b = r.bottom + window.scrollY;
+      if (b > contentBottom) contentBottom = b;
+      if (r.height > tallest.getBoundingClientRect().height) tallest = el;
+    }
+    if (contentBottom <= window.innerHeight * 1.2) return; // genuinely short page
+
+    // Unlock EVERY ancestor of the content column, not just body's direct
+    // children — these layouts nest several viewport-sized clippers, and one
+    // survivor anywhere in the chain clips the paint back to one viewport.
+    // Explicit height (not 'auto') because sections are often positioned
+    // absolutely inside the clipper, so 'auto' collapses to 0.
+    const px = Math.ceil(contentBottom) + 'px';
+    let node = tallest;
+    while (node && node !== document.documentElement) {
+      const s = getComputedStyle(node);
+      if (s.position === 'fixed' || s.position === 'absolute') node.style.position = 'static';
+      if (node.clientHeight <= window.innerHeight * 1.2) node.style.height = px;
+      node.style.maxHeight = 'none';
+      node.style.overflow = 'visible';
+      node = node.parentElement;
+    }
+    const rootUnlock = (el) => {
+      const s = getComputedStyle(el);
+      if (s.position === 'fixed' || s.position === 'absolute') el.style.position = 'static';
+      el.style.height = px;
+      el.style.maxHeight = 'none';
+      el.style.overflow = 'visible';
+    };
+    rootUnlock(document.documentElement);
+    rootUnlock(document.body);
+  });
 
   // Scroll through the full page to trigger lazy-loaded content,
   // then return to top so element positions are measured from the top.
+  // Reads scrollingElement (not body) and re-reads scrollHeight live so
+  // content that grows while loading still gets scrolled; hard cap keeps
+  // infinite-scroll pages from running away (Chrome clips captures at
+  // 16384px anyway).
   await page.evaluate(async () => {
     await new Promise((resolve) => {
+      const doc = document.scrollingElement || document.documentElement;
       let total = 0;
       const timer = setInterval(() => {
         window.scrollBy(0, 100);
         total += 100;
-        if (total >= document.body.scrollHeight) {
+        if (total >= doc.scrollHeight || total >= 16000) {
           clearInterval(timer);
           window.scrollTo(0, 0);
           resolve();
@@ -131,6 +201,35 @@ export default async function({ page, context }) {
       }, 50);
     });
   });
+
+  // Force-reveal scroll animations. Sites stage content as inline
+  // "opacity:0; translateY(16px)" until their scroll engine reveals it —
+  // an engine that may be dead after the unlock above (slashy again: 90% of
+  // the capture was blank white over real content). Rules:
+  // - opacity only; display:none / visibility:hidden are real UI states
+  //   (menus, modals) and stay hidden
+  // - fixed elements skipped (overlays)
+  // - transform cleared only when it's a small translate (a reveal offset),
+  //   never a real layout transform like a carousel track
+  await page.evaluate(() => {
+    // Freeze the page's animation engine FIRST — scroll libraries re-stamp
+    // "opacity:0" inline every frame, clobbering the reveal below before the
+    // screenshot can happen. Screenshotting doesn't need the page's rAF.
+    window.requestAnimationFrame = () => 0;
+
+    for (const el of document.querySelectorAll('body *')) {
+      const s = getComputedStyle(el);
+      if (s.display === 'none' || s.position === 'fixed') continue;
+      if (parseFloat(s.opacity) < 0.1) {
+        el.style.setProperty('opacity', '1', 'important');
+        const m = s.transform.match(/^matrix\(1, 0, 0, 1, (-?[\d.]+), (-?[\d.]+)\)$/);
+        if (m && Math.abs(parseFloat(m[1])) <= 120 && Math.abs(parseFloat(m[2])) <= 120) {
+          el.style.setProperty('transform', 'none', 'important');
+        }
+      }
+    }
+  });
+  await new Promise(r => setTimeout(r, 150));
 
   // Screenshot taken from this same page instance — positions will match exactly.
   // Browserless runs in a browser (Chrome V8) context, not Node.js — no Buffer.
@@ -144,7 +243,17 @@ export default async function({ page, context }) {
   }
   const screenshotBase64 = btoa(binary);
 
-  const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+  // Measure the geometry that was ACTUALLY rendered — never assume the
+  // requested viewport applied. Element coords (getBoundingClientRect) live
+  // in this same coordinate space, so storing these keeps pins aligned even
+  // if the viewport silently reverted.
+  const layoutWidth = await page.evaluate(() => document.documentElement.clientWidth);
+  const pageHeight = await page.evaluate(() =>
+    Math.max(
+      document.documentElement.scrollHeight,
+      document.body ? document.body.scrollHeight : 0,
+    )
+  );
 
   const elements = await page.evaluate(() => {
     // Original tags first — Claude's summary takes the first 50 elements in
@@ -206,6 +315,12 @@ export default async function({ page, context }) {
 
         const top  = Math.round(rect.top  + window.scrollY);
         const left = Math.round(rect.left + window.scrollX);
+
+        // Skip elements fully outside the horizontal viewport (carousel
+        // clones, marquee overflow — report #48 had content out to x=4300).
+        // They aren't in the screenshot, so they can't be pinned or picked.
+        const docWidth = document.documentElement.clientWidth;
+        if (left >= docWidth || left + Math.round(rect.width) <= 0) return;
         // Tag-aware key: dedupes the same element matched by two selectors,
         // but keeps distinct nested elements that share a corner (a span at
         // the very start of its h1 would otherwise be dropped).
@@ -272,7 +387,7 @@ export default async function({ page, context }) {
   const pageText = await page.evaluate(() => document.body.innerText?.slice(0, 3000) || '');
 
   return {
-    data: { elements, pageHeight, pageText, screenshotBase64 },
+    data: { elements, pageHeight, layoutWidth, pageText, screenshotBase64 },
     type: 'application/json',
   };
 }
@@ -336,6 +451,28 @@ const corsHeaders = {
 // lib/analytics.ts → normalizePath/summarizeForPath (edge functions can't
 // import from lib/). Strictly optional: any miss or error → empty string, the
 // pipeline behaves exactly as before.
+
+// Actual pixel dimensions of the captured webp (VP8X / VP8 / VP8L headers).
+// Returns null on anything unrecognized — callers fall back to the in-page
+// measurements.
+function webpDimensions(b: Uint8Array): { w: number; h: number } | null {
+  if (b.length < 30) return null;
+  const fourcc = String.fromCharCode(b[12], b[13], b[14], b[15]);
+  if (fourcc === 'VP8X') {
+    return {
+      w: 1 + (b[24] | (b[25] << 8) | (b[26] << 16)),
+      h: 1 + (b[27] | (b[28] << 8) | (b[29] << 16)),
+    };
+  }
+  if (fourcc === 'VP8 ') {
+    return { w: (b[26] | (b[27] << 8)) & 0x3fff, h: (b[28] | (b[29] << 8)) & 0x3fff };
+  }
+  if (fourcc === 'VP8L') {
+    const bits = b[21] | (b[22] << 8) | (b[23] << 16) | (b[24] << 24);
+    return { w: (bits & 0x3fff) + 1, h: ((bits >> 14) & 0x3fff) + 1 };
+  }
+  return null;
+}
 
 function normalizePath(urlOrPath: string): string {
   let path = urlOrPath.trim();
@@ -446,8 +583,8 @@ Deno.serve(async (req) => {
 
     // Browserless may return { data: { ... } } or the payload directly
     const extractData = extractRaw.screenshotBase64 ? extractRaw : (extractRaw.data ?? extractRaw);
-    const { elements, pageHeight, pageText, screenshotBase64 } = extractData;
-    console.log('Elements extracted:', elements?.length, '| pageHeight:', pageHeight);
+    const { elements, pageHeight, layoutWidth, pageText, screenshotBase64 } = extractData;
+    console.log('Elements extracted:', elements?.length, '| pageHeight:', pageHeight, '| layoutWidth:', layoutWidth);
 
     if (!screenshotBase64) throw new Error('No screenshot returned from Browserless');
 
@@ -455,6 +592,22 @@ Deno.serve(async (req) => {
     // atob() is a standard Web API available in Deno — no Node Buffer needed.
     // Strip whitespace first in case the encoding added line breaks.
     const screenshotBytes = Uint8Array.from(atob(screenshotBase64.replace(/\s/g, '')), c => c.charCodeAt(0));
+
+    // Ground truth for all overlay math: the pixels we actually captured.
+    // Element coords are CSS px in the measured layout (layoutWidth wide), so
+    // page height for the pct math is derived from the image's aspect ratio in
+    // that same space — this stays correct even if Chrome scaled or clipped
+    // the capture (16384px cap) or the viewport silently reverted (report #48
+    // was stored as 1440 wide while the real screenshot was 800).
+    const shot = webpDimensions(screenshotBytes);
+    const coordWidth = layoutWidth || VIEWPORT.width;
+    const coordHeight = shot ? Math.round(shot.h * (coordWidth / shot.w)) : pageHeight;
+    if (coordWidth !== VIEWPORT.width) {
+      console.warn(`Layout width ${coordWidth} differs from requested viewport ${VIEWPORT.width}`);
+    }
+    if (shot && Math.abs(coordHeight - pageHeight) > pageHeight * 0.05) {
+      console.warn(`Screenshot-derived height ${coordHeight} differs from measured scrollHeight ${pageHeight}`);
+    }
     const storagePath = `${report_id ?? 'test'}/${Date.now()}.webp`;
 
     const { error: uploadError } = await supabase.storage
@@ -481,7 +634,7 @@ Deno.serve(async (req) => {
         text:       el.text?.slice(0, 100),
         word_count: el.wordCount ?? 0,
         section:    getSectionForElement(el, sections),
-        position:   `${Math.round((el.top / pageHeight) * 100)}% from top`,
+        position:   `${Math.round((el.top / coordHeight) * 100)}% from top`,
       };
       if ((el.siblingCount ?? 1) > 1) entry.siblings = el.siblingCount;
       // Rich text: the element's text is split across styled children (e.g. a
@@ -624,10 +777,10 @@ If a comment could apply to any website, delete it.`;
           confidence,
           selector:       el.selector,
           original_value: el.text ?? el.alt ?? null,
-          top_pct:        el.top    / pageHeight,
-          left_pct:       el.left   / VIEWPORT.width,
-          width_pct:      el.width  / VIEWPORT.width,
-          height_pct:     el.height / pageHeight,
+          top_pct:        el.top    / coordHeight,
+          left_pct:       el.left   / coordWidth,
+          width_pct:      el.width  / coordWidth,
+          height_pct:     el.height / coordHeight,
         };
       })
       .filter(Boolean);
@@ -642,8 +795,8 @@ If a comment could apply to any website, delete it.`;
         .update({
           status:         'complete',
           screenshot_url: screenshotUrl,
-          page_height:    pageHeight,
-          viewport_width: VIEWPORT.width,
+          page_height:    coordHeight,
+          viewport_width: coordWidth,
           overall_score:  analysis.overall_score,
           summary:        analysis.summary,
           // Full element map (selectors + bounding boxes) — the experiment
@@ -689,7 +842,7 @@ If a comment could apply to any website, delete it.`;
       overall_score: analysis.overall_score,
       summary:       analysis.summary,
       screenshot_url: screenshotUrl,
-      page_height:   pageHeight,
+      page_height:   coordHeight,
       comments:      resolvedComments,
     }, { headers: corsHeaders });
 

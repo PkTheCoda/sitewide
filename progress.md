@@ -95,6 +95,15 @@ Read-only analytics context for the agent — every pilot founder is on PostHog.
 - [ ] Verify live against a real PostHog project (results array shape confirmed empirically)
 - [ ] GA4 connector (later — PostHog covers the current ICP; GA4 skews enterprise)
 
+### 2.5 Capture hardening (2026-08-07, found in pre-pilot QA — needs `supabase functions deploy analyze-page`)
+Two site-dependent capture failures surfaced by QA (reports #47 slashy.com, #48 upahead.online); talem.org always fine. Root causes + fixes, all in `analyze-page`'s EXTRACT_SCRIPT + Deno post-processing, verified against live Browserless on all three sites:
+- [x] **Viewport silently reverting** (#48: stored 1440 but screenshot was 800 = Puppeteer's default → "zoomed" display, misaligned pins). Fix: `deviceScaleFactor: 1` + re-assert `setViewport` after `goto`, and — the real defense — **store measured geometry, never constants**: `viewport_width` = `documentElement.clientWidth` at capture, `page_height` derived from the actual webp's dimensions (header parsed in Deno) converted into coordinate space. Warns to logs on mismatch.
+- [x] **Scroll-hijacking pages captured as one blank viewport** (#47: html/body/wrappers pinned `position:fixed; overflow:hidden; height:900px`, real 10k-px content clipped inside, Framer-style absolute sections). Fix chain (each step was necessary): detect by symptom (window can't scroll but rendered content ≫ viewport) → unlock the ENTIRE ancestor chain of the tallest content element with explicit pixel heights (`auto` collapses to 0 with absolutely-positioned sections; one surviving clipper anywhere re-clips the paint) → scroll via `scrollingElement` with a live-read height + 16k cap → freeze `requestAnimationFrame` and force-reveal inline `opacity:0; translateY(≤120px)` scroll-animation staging (opacity only — `display:none`/`visibility:hidden`/fixed elements stay hidden; big transforms like carousel tracks untouched).
+- [x] CSS zoom neutralized on html/body (Chrome 128+ zoom desyncs getBoundingClientRect from captured pixels).
+- [x] Elements fully outside the horizontal viewport skipped at capture (carousel clones/marquee overflow — #48 had content to x=4300 polluting the element list and Claude's context).
+- [x] Verified end-to-end via scratchpad Browserless runs: all three sites now geometry-consistent AND visually complete (slashy renders every section; upahead at true 1440).
+- Old broken reports keep their bad stored data (fix is capture-time) — delete + re-analyze them.
+
 ---
 
 ## Phase 3 — Polish + Launch
