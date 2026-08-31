@@ -10,10 +10,11 @@
 //   RESEND_API_KEY — unset means every send returns {sent:false} (and gets
 //                    logged), so the whole pipeline is testable before the
 //                    founder creates the Resend account.
-//   EMAIL_FROM     — verified sender. Defaults to Resend's shared onboarding
-//                    address, which can only deliver to the Resend account
-//                    owner — fine for solo testing, must be replaced with a
-//                    verified domain before pilots.
+//   EMAIL_FROM     — verified sender, REQUIRED. Unset means every send returns
+//                    {sent:false} with a reason naming the fix. (It used to
+//                    fall back to Resend's shared onboarding address, which
+//                    only delivers to the Resend account owner — the founder's
+//                    own inbox worked while every pilot's stayed empty.)
 
 export type SendResult = { sent: true; id: string } | { sent: false; reason: string };
 
@@ -25,6 +26,18 @@ export async function sendEmail(opts: {
     const key = process.env.RESEND_API_KEY;
     if (!key) return { sent: false, reason: "RESEND_API_KEY not set" };
 
+    // The shared onboarding sender is a trap: Resend accepts the request but
+    // only delivers to the account owner, so the founder sees their own test
+    // emails arrive and assumes pilots get them too. Refuse to send to anyone
+    // else from it, with a reason that says exactly what to set.
+    const from = process.env.EMAIL_FROM;
+    if (!from) {
+        return {
+            sent: false,
+            reason: "EMAIL_FROM not set — Resend's shared onboarding@resend.dev sender only delivers to the Resend account owner. Verify a domain in Resend and set EMAIL_FROM (e.g. \"Sitewide Agent <agent@yourdomain.com>\") in Vercel.",
+        };
+    }
+
     try {
         const res = await fetch("https://api.resend.com/emails", {
             method: "POST",
@@ -33,7 +46,7 @@ export async function sendEmail(opts: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                from: process.env.EMAIL_FROM ?? "Sitewide Agent <onboarding@resend.dev>",
+                from,
                 to: opts.to,
                 subject: opts.subject,
                 html: opts.html,

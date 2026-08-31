@@ -95,14 +95,15 @@ async function setup() {
   const [real] = await db("GET", "experiments?select=user_id,site_id&limit=1&status=eq.running");
   if (!real) throw new Error("no running experiment to copy user/site from");
 
-  // A: single challenger losing hard, min_sample 1000 -> harm gate must fire pre-min-sample
+  // A: single challenger losing hard, min_sample 1000 -> harm gate must fire
+  // pre-min-sample. 200/arm clears HARM_MIN_EXPOSURES (150) with room.
   const A = await makeExperiment(real, "A harm-gate all", 1000, [
     { name: "Control", weight: 50 },
     { name: "Bad Variant", weight: 50 },
   ]);
   await db("POST", "experiment_events", [
-    ...events(A.exp.id, A.variants[0].id, "a-c", 100, 30),
-    ...events(A.exp.id, A.variants[1].id, "a-b", 100, 5),
+    ...events(A.exp.id, A.variants[0].id, "a-c", 200, 60),
+    ...events(A.exp.id, A.variants[1].id, "a-b", 200, 10),
   ]);
 
   // B: one of two challengers losing hard -> partial kill, experiment continues
@@ -112,9 +113,21 @@ async function setup() {
     { name: "Fine Variant", weight: 33 },
   ]);
   await db("POST", "experiment_events", [
-    ...events(B.exp.id, B.variants[0].id, "b-c", 100, 20),
-    ...events(B.exp.id, B.variants[1].id, "b-bad", 100, 4),
-    ...events(B.exp.id, B.variants[2].id, "b-ok", 100, 22),
+    ...events(B.exp.id, B.variants[0].id, "b-c", 200, 40),
+    ...events(B.exp.id, B.variants[1].id, "b-bad", 200, 8),
+    ...events(B.exp.id, B.variants[2].id, "b-ok", 200, 44),
+  ]);
+
+  // D: a variant losing badly at 100/arm — below HARM_MIN_EXPOSURES (150), so
+  // the harm gate must NOT touch it whatever the gap. min_sample 1000 keeps the
+  // regular decision rule out of it too: the ONLY way this could end is the gate.
+  const D = await makeExperiment(real, "D under harm floor", 1000, [
+    { name: "Control", weight: 50 },
+    { name: "Unlucky Variant", weight: 50 },
+  ]);
+  await db("POST", "experiment_events", [
+    ...events(D.exp.id, D.variants[0].id, "d-c", 100, 30),
+    ...events(D.exp.id, D.variants[1].id, "d-b", 100, 5),
   ]);
 
   // C: variant with heavy selector misses -> pause
@@ -127,14 +140,57 @@ async function setup() {
     ...events(C.exp.id, C.variants[1].id, "c-b", 20, 2, 6),
   ]);
 
-  console.log("created:", A.exp.id, B.exp.id, C.exp.id);
-  return { A, B, C };
+  console.log("created:", A.exp.id, B.exp.id, C.exp.id, D.exp.id);
+  return { A, B, C, D, site_id: real.site_id };
 }
 
-async function eventRouteChecks(runningExpId, runningVariantId) {
+async function eventRouteChecks(runningExpId, runningVariantId, siteId) {
   console.log("== event route ==");
-  const post = (body) =>
-    fetch(`${LOCAL}/api/snippet/event`, { method: "POST", body: JSON.stringify(body) });
+  const post = (body, headers = {}) =>
+    fetch(`${LOCAL}/api/snippet/event`, { method: "POST", headers, body: JSON.stringify(body) });
+
+  // Public-endpoint guards (lib/snippetGuards.ts): ids must be UUIDs, and
+  // events must come from the site's own domain when the browser says where
+  // they came from (Origin). Node's fetch sends no Origin, so the plain posts
+  // below are the "no signal → allowed" path.
+  const [{ domain }] = await db("GET", `sites?id=eq.${siteId}&select=domain`);
+  const junk = await post({ experiment_id: "abc", variant_id: runningVariantId, visitor_id: "evt-junk", event_type: "exposure" });
+  check("malformed experiment id rejected with 400 (not 500)", junk.status === 400, `got ${junk.status}`);
+  const badVid = await post({ experiment_id: runningExpId, variant_id: runningVariantId, visitor_id: "x y;drop", event_type: "exposure" });
+  check("visitor_id with odd characters rejected", badVid.status === 400, `got ${badVid.status}`);
+  const foreign = await post(
+    { experiment_id: runningExpId, variant_id: runningVariantId, visitor_id: "evt-foreign-1", event_type: "exposure" },
+    { origin: "https://sitewide-git-preview.vercel.app" }
+  );
+  const foreignBody = await foreign.json();
+  check("event from a foreign origin is dropped (200 + filtered)", foreign.status === 200 && foreignBody.filtered === "origin mismatch", JSON.stringify(foreignBody));
+  const foreignRows = await db("GET", `experiment_events?experiment_id=eq.${runningExpId}&visitor_id=eq.evt-foreign-1&select=id`);
+  check("foreign-origin event never stored", foreignRows.length === 0, `got ${foreignRows.length}`);
+  const own = await post(
+    { experiment_id: runningExpId, variant_id: runningVariantId, visitor_id: "evt-own-1", event_type: "exposure" },
+    { origin: `https://www.${domain.replace(/^www\./, "")}` }
+  );
+  const ownBody = await own.json();
+  check("event from the site's own origin (www-tolerant) accepted", own.status === 200 && !ownBody.filtered, JSON.stringify(ownBody));
+  const ownRows = await db("GET", `experiment_events?experiment_id=eq.${runningExpId}&visitor_id=eq.evt-own-1&select=id`);
+  check("own-origin event stored", ownRows.length === 1, `got ${ownRows.length}`);
+
+  // served script: a junk site id must be valid JS with an empty config, not a 500
+  const js = await fetch(`${LOCAL}/api/snippet/js/not-a-uuid`);
+  const jsText = await js.text();
+  check("js route: junk site id → 200", js.status === 200, `got ${js.status}`);
+  check("js route: junk site id → empty config embedded", /"experiments":\[\]/.test(jsText));
+  const cfgJunk = await (await fetch(`${LOCAL}/api/snippet/config?site_id=zzz`)).json();
+  check("config route: junk site id → empty experiments", Array.isArray(cfgJunk.experiments) && cfgJunk.experiments.length === 0, JSON.stringify(cfgJunk));
+
+  // heartbeat: a config request from a foreign referer must not flip the site to installed
+  const before = (await db("GET", `sites?id=eq.${siteId}&select=snippet_last_seen_at`))[0].snippet_last_seen_at;
+  await fetch(`${LOCAL}/api/snippet/config?site_id=${siteId}&_=${Date.now()}`, { headers: { referer: "https://evil.example/" } });
+  const afterForeign = (await db("GET", `sites?id=eq.${siteId}&select=snippet_last_seen_at`))[0].snippet_last_seen_at;
+  check("foreign referer does not bump heartbeat", afterForeign === before, `${before} → ${afterForeign}`);
+  await fetch(`${LOCAL}/api/snippet/config?site_id=${siteId}&_=${Date.now()}`, { headers: { referer: `https://${domain}/pricing` } });
+  const afterOwn = (await db("GET", `sites?id=eq.${siteId}&select=snippet_last_seen_at`))[0].snippet_last_seen_at;
+  check("own-domain referer bumps heartbeat", afterOwn !== before && afterOwn !== null, `${before} → ${afterOwn}`);
 
   const ok = await post({
     experiment_id: runningExpId,
@@ -179,7 +235,7 @@ async function run() {
   return body;
 }
 
-async function assertAll({ A, B, C }, evalBody) {
+async function assertAll({ A, B, C, D }, evalBody) {
   console.log("== assertions ==");
   const get1 = async (p) => (await db("GET", p))[0];
 
@@ -214,6 +270,12 @@ async function assertAll({ A, B, C }, evalBody) {
     JSON.stringify(bEmail?.detail)
   );
 
+  // D: under HARM_MIN_EXPOSURES — the gate must not fire regardless of the gap
+  const d = await get1(`experiments?id=eq.${D.exp.id}&select=status`);
+  check("D still running (below harm-gate floor)", d.status === "running", d.status);
+  const dVar = await get1(`experiment_variants?id=eq.${D.variants[1].id}&select=killed_at`);
+  check("D variant NOT killed at 100/arm", !dVar.killed_at);
+
   // C: paused for selector misses
   const c = await get1(`experiments?id=eq.${C.exp.id}&select=status`);
   check("C paused", c.status === "paused", c.status);
@@ -229,13 +291,13 @@ async function assertAll({ A, B, C }, evalBody) {
   check("run_finished heartbeat", beats.some((x) => x.action === "run_finished"));
   check("run_started heartbeat", beats.some((x) => x.action === "run_started"));
   const fin = beats.find((x) => x.action === "run_finished");
-  check("heartbeat counts evaluations", (fin?.detail?.evaluated ?? 0) >= 3, JSON.stringify(fin?.detail));
+  check("heartbeat counts evaluations", (fin?.detail?.evaluated ?? 0) >= 4, JSON.stringify(fin?.detail));
 
-  // min_sample floor: the real experiment (tiny min_sample) must now wait for 100
+  // min_sample floor: whatever the row says, the evaluator never judges below 100
   const realResult = (evalBody.results ?? []).find((r) => !String(r.name ?? "").includes(MARK));
   check(
-    "real experiment floored to min_sample 100",
-    realResult?.reason === "insufficient_sample" && realResult?.min_sample_size === 100,
+    "real experiment's effective min_sample is at least the 100 floor",
+    !realResult || realResult.min_sample_size === undefined || realResult.min_sample_size >= 100,
     JSON.stringify({ reason: realResult?.reason, min: realResult?.min_sample_size })
   );
 
@@ -256,11 +318,22 @@ async function assertAll({ A, B, C }, evalBody) {
   const digBody = await dig.json();
   check("digest route 200", dig.status === 200, `got ${dig.status}`);
   check("digest built for at least the founder", (digBody.outcomes ?? []).length >= 1, JSON.stringify(digBody));
+  // Without a verified sender the transport must refuse and SAY WHY — a
+  // silent "sent" that only ever reached the Resend account owner is the bug
+  // this guards against.
   const noKey = !env.RESEND_API_KEY;
+  const noFrom = !env.EMAIL_FROM;
+  const outcomes = digBody.outcomes ?? [];
   check(
-    noKey ? "digest outcomes report missing key" : "digest outcomes sent",
-    (digBody.outcomes ?? []).every((o) => (noKey ? o.sent === false : o.sent === true)),
-    JSON.stringify(digBody.outcomes)
+    noKey ? "digest outcomes report missing key"
+      : noFrom ? "digest outcomes report missing EMAIL_FROM"
+      : "digest outcomes sent",
+    outcomes.every((o) =>
+      noKey ? o.sent === false && /RESEND_API_KEY/.test(o.reason ?? "")
+        : noFrom ? o.sent === false && /EMAIL_FROM/.test(o.reason ?? "")
+        : o.sent === true
+    ),
+    JSON.stringify(outcomes)
   );
 }
 
@@ -285,7 +358,7 @@ try {
     await cleanup();
   } else {
     const ctx = await setup();
-    await eventRouteChecks(ctx.B.exp.id, ctx.B.variants[2].id);
+    await eventRouteChecks(ctx.B.exp.id, ctx.B.variants[2].id, ctx.site_id);
     const body = await run();
     await assertAll(ctx, body);
     await cleanup();

@@ -104,6 +104,19 @@ Two site-dependent capture failures surfaced by QA (reports #47 slashy.com, #48 
 - [x] Verified end-to-end via scratchpad Browserless runs: all three sites now geometry-consistent AND visually complete (slashy renders every section; upahead at true 1440).
 - Old broken reports keep their bad stored data (fix is capture-time) — delete + re-analyze them.
 
+### 2.6 Pilot-readiness fixes (2026-08-28, from a full-platform audit — needs `supabase functions deploy analyze-page` + Vercel env)
+Six "actively wrong" findings fixed; cosmetic/dead-UI items from the same audit deliberately deferred.
+- [x] **Snippet SPA navigation** (`public/snippet.js`): `pushState`/`replaceState`/`popstate` hooked; page evaluation (variant apply, exposure, pageview conversion) re-runs on every real path change; click-goal listener bound once per experiment and checks the path at click time; previous page's apply loop is stopped on navigation and `applyAll` re-checks the path per item so a same-shaped selector can't patch the next page; per-session event dedupe; `selector_miss` skipped if the visitor navigated away before 8s. 18 new jsdom cases (`scripts/test-snippet.mjs`, 44 total). Before this, Next/React sites lost every pageview conversion reached via the router.
+- [x] **`analyze-page` auth**: `verify_jwt = true`; caller derived from the session JWT (`supabase.auth.getUser`), body `user_id` ignored, `report_id` re-runs require ownership, URL validated. Previously anyone with the anon key could run analyses on our bill and write reports into any dashboard.
+- [x] **Stuck `processing` reports**: `AbortSignal.timeout` on Browserless (70s) and Claude (60s) calls with human error text; Analyses list treats `processing` older than 5 min as failed and offers Retry (`reanalyzeReport` → same row).
+- [x] **Public endpoint guards** (`lib/snippetGuards.ts`): UUID validation on site/experiment/variant ids (junk → empty config / 400, never a 500); `/api/snippet/event` rate-limited per IP (60/min, per instance) and rejects events whose `Origin` host isn't the experiment's site domain (www/apex tolerant, localhost allowed) — preview deploys and copied tags show variants but never count; heartbeat awaited and only bumped by requests whose Referer is the site's own domain. Config served is NOT referer-dependent (edge cache keys on URL only).
+- [x] **Agent liveness visible**: `GET /api/agent/status` (own-token auth, service role) reads the null-experiment heartbeat rows the RLS feed can't see; Overview "Agent health" card goes rose past 30h without a run and surfaces email failures with the reason.
+- [x] **Harm gate floor 25 → 150 exposures/arm** (`HARM_MIN_EXPOSURES`, now in `lib/stats.ts`); new harm-gate A/A simulation in `scripts/test-bayes-stats.ts` (false kills 6.5% → 4.3% at 25 visitors/arm/day over 60 peeks; a −40% variant still killed 100% by median day 8).
+- [x] **Email sender guard**: `EMAIL_FROM` unset → every send returns `{sent:false}` with a reason naming the fix (Resend's shared sender only delivers to the account owner — founder's inbox worked, pilots' would not).
+- [x] `scripts/test-agent.mjs` extended (39 live checks): origin/UUID/heartbeat guards, harm-floor case D, EMAIL_FROM expectation.
+- [ ] **Founder**: verify a sending domain in Resend; set `EMAIL_FROM` + `APP_URL` in Vercel; `supabase functions deploy analyze-page`.
+- [ ] Safari ITP caps JS-set cookies at 7 days → long-consideration visitors re-bucket as new; consider a localStorage mirror for `sw_vid` (post first pilot data).
+
 ---
 
 ## Phase 3 — Polish + Launch

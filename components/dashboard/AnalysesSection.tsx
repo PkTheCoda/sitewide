@@ -3,9 +3,16 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/services/context/authContext";
-import { deleteReport, getReports } from "@/lib/reports";
+import { deleteReport, getReports, isStaleProcessing, reanalyzeReport } from "@/lib/reports";
 import { Report } from "@/lib/types";
 import StatusBadge from "./StatusBadge";
+
+// A report the platform killed mid-run stays `processing` in the DB with no
+// one to flip it; the list shows it as failed past the stale window so the
+// founder gets a Retry instead of a permanent spinner.
+function displayStatus(report: Report): Report["status"] {
+    return isStaleProcessing(report) ? "error" : report.status;
+}
 
 // The Analyses tab: a card per report (one report = one analysis run of one
 // URL). Cards link OUT to real routes — /dashboard/report/[id] for the overlay
@@ -19,6 +26,35 @@ export default function AnalysesSection() {
     const [armedId, setArmedId] = useState<string | null>(null);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [deleteError, setDeleteError] = useState<string | null>(null);
+    const [retryingId, setRetryingId] = useState<string | null>(null);
+
+    async function handleRetry(report: Report) {
+        if (retryingId !== null) return;
+        setRetryingId(report.id);
+        setDeleteError(null);
+        setReports((prev) =>
+            prev?.map((r) =>
+                r.id === report.id
+                    ? { ...r, status: "processing", error_message: null, created_at: new Date().toISOString() }
+                    : r
+            ) ?? prev
+        );
+        const result = await reanalyzeReport(report.id, report.url);
+        if ("error" in result && result.error) {
+            setDeleteError(result.error);
+            setReports((prev) =>
+                prev?.map((r) => (r.id === report.id ? { ...r, status: "error", error_message: result.error! } : r)) ?? prev
+            );
+        } else if (user) {
+            const data = await getReports(user.id);
+            if (Array.isArray(data)) {
+                setReports([...(data as Report[])].sort(
+                    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                ));
+            }
+        }
+        setRetryingId(null);
+    }
 
     async function handleDelete(reportId: string) {
         if (deletingId !== null) return;
@@ -92,7 +128,7 @@ export default function AnalysesSection() {
                                     />
                                 ) : (
                                     <div className="w-full h-full flex items-center justify-center text-xs text-stone-400">
-                                        {report.status === "error" ? "Analysis failed" : "Processing…"}
+                                        {displayStatus(report) === "error" ? "Analysis failed" : "Processing…"}
                                     </div>
                                 )}
                             </div>
@@ -101,8 +137,22 @@ export default function AnalysesSection() {
                                     <p className="text-xs font-medium text-stone-700 truncate">
                                         {report.url}
                                     </p>
-                                    <StatusBadge status={report.status} />
+                                    <StatusBadge status={displayStatus(report)} />
                                 </div>
+                                {displayStatus(report) === "error" && (
+                                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                                        <span className="text-red-600 truncate">
+                                            {report.error_message ?? "The analysis didn't finish."}
+                                        </span>
+                                        <button
+                                            onClick={() => handleRetry(report)}
+                                            disabled={retryingId !== null}
+                                            className="shrink-0 font-medium text-stone-700 hover:text-orange-700 disabled:opacity-50"
+                                        >
+                                            {retryingId === report.id ? "Retrying…" : "Retry"}
+                                        </button>
+                                    </div>
+                                )}
                                 <div className="flex items-center justify-between text-[11px] text-stone-400">
                                     <span>
                                         {report.overall_score !== null

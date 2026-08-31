@@ -1,4 +1,5 @@
 import { buildSnippetConfig } from "@/lib/snippetConfig";
+import { requesterHost } from "@/lib/snippetGuards";
 
 // Legacy config endpoint, still called by static-snippet installs
 // (<script defer src="/snippet.js" data-site-id=…>) and by the snippet's
@@ -23,7 +24,7 @@ export async function GET(request: Request) {
     }
 
     try {
-        const config = await buildSnippetConfig(siteId);
+        const config = await buildSnippetConfig(siteId, requesterHost(request));
         return Response.json(config, {
             headers: {
                 ...CORS,

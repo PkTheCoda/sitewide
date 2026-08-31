@@ -7,8 +7,10 @@ import Image from "next/image";
 import { useAuth } from "@/services/context/authContext";
 import { analyzeUrl, getReports } from "@/lib/reports";
 import {
+    AgentStatus,
     dismissExperiment,
     getAgentFeed,
+    getAgentStatus,
     getExperimentEvents,
     getExperimentVariants,
     getExperiments,
@@ -116,6 +118,44 @@ function siteHealth(site: Site): { dot: string; label: string } {
     return { dot: "bg-rose-500", label: `Not seen since ${fmtRelative(site.snippet_last_seen_at)}` };
 }
 
+// Agent liveness → dot + label. The cron is daily (09:00 UTC, ±1h on Hobby),
+// so anything past ~30h since the last heartbeat means it is NOT running —
+// the failure mode this product has already had once, silently.
+function agentHealth(
+    status: AgentStatus | null,
+    hasRunning: boolean
+): { dot: string; label: string; detail: string | null } {
+    if (!status) return { dot: "bg-stone-300", label: "Checking…", detail: null };
+    if (!status.last_started_at) {
+        return {
+            dot: hasRunning ? "bg-amber-500" : "bg-stone-300",
+            label: "Hasn't run yet",
+            detail: hasRunning ? "Your experiment is live but the daily agent has never checked in." : null,
+        };
+    }
+    const hours = (Date.now() - new Date(status.last_started_at).getTime()) / 3_600_000;
+    const unfinished =
+        !status.last_finished_at || new Date(status.last_finished_at) < new Date(status.last_started_at);
+    if (hours > 30) {
+        return {
+            dot: "bg-rose-500",
+            label: `Last ran ${fmtRelative(status.last_started_at)}`,
+            detail: "The daily check hasn't run in over a day — experiments aren't being evaluated.",
+        };
+    }
+    if (unfinished && hours > 1) {
+        return {
+            dot: "bg-amber-500",
+            label: `Started ${fmtRelative(status.last_started_at)}, didn't finish`,
+            detail: "The last run started but never wrote a finish record.",
+        };
+    }
+    if (status.last_run_error) {
+        return { dot: "bg-amber-500", label: `Ran ${fmtRelative(status.last_started_at)} with an error`, detail: status.last_run_error };
+    }
+    return { dot: "bg-emerald-500", label: `Ran ${fmtRelative(status.last_started_at)}`, detail: null };
+}
+
 type VariantCounts = Record<string, { exposures: number; conversions: number }>;
 type RunningExperiment = {
     experiment: Experiment;
@@ -142,18 +182,21 @@ export default function OverviewSection({ displayName }: Props) {
     const [feedLoading, setFeedLoading] = useState(false);
     const [weekly, setWeekly] = useState({ exposures: 0, conversions: 0 });
     const [sites, setSites] = useState<Site[]>([]);
+    const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
     const [reports, setReports] = useState<Report[]>([]);
     const [busy, setBusy] = useState(false);
 
     const load = useCallback(async () => {
         if (!user) return;
-        const [expData, feedData, weeklyData, siteData, reportData] = await Promise.all([
+        const [expData, feedData, weeklyData, siteData, reportData, statusData] = await Promise.all([
             getExperiments(user.id),
             getAgentFeed(user.id, FEED_PAGE, 0),
             getWeeklyEventCounts(user.id),
             getSites(user.id),
             getReports(user.id),
+            getAgentStatus(),
         ]);
+        if (!("error" in statusData)) setAgentStatus(statusData);
 
         const exps = Array.isArray(expData) ? (expData as Experiment[]) : [];
         setExperiments(exps);
@@ -501,8 +544,54 @@ export default function OverviewSection({ displayName }: Props) {
                             )}
                         </div>
 
-                        {/* ── Right column: snippet health + recent analyses ── */}
+                        {/* ── Right column: agent + snippet health, recent analyses ── */}
                         <div className="flex flex-col gap-3">
+                            <div className="bg-white border border-stone-200 rounded-2xl shadow-xs p-4 flex flex-col gap-3">
+                                <h2 className="text-sm font-semibold tracking-tight text-stone-800">
+                                    Agent health
+                                </h2>
+                                {(() => {
+                                    const health = agentHealth(
+                                        agentStatus,
+                                        experiments.some((e) => e.status === "running")
+                                    );
+                                    return (
+                                        <div className="flex flex-col gap-1.5">
+                                            <div className="flex items-center gap-2.5 min-w-0">
+                                                <span className={`size-2 rounded-full shrink-0 ${health.dot}`} />
+                                                <span className="text-xs font-medium text-stone-700 truncate">
+                                                    Daily check
+                                                </span>
+                                                <span className="text-[11px] text-stone-400 ml-auto shrink-0">
+                                                    {health.label}
+                                                </span>
+                                            </div>
+                                            {health.detail && (
+                                                <p className="text-[11px] text-rose-600 leading-relaxed">{health.detail}</p>
+                                            )}
+                                            {agentStatus && agentStatus.email_failures_7d > 0 && (
+                                                <div className="flex flex-col gap-0.5">
+                                                    <div className="flex items-center gap-2.5 min-w-0">
+                                                        <span className="size-2 rounded-full shrink-0 bg-rose-500" />
+                                                        <span className="text-xs font-medium text-stone-700 truncate">
+                                                            Emails
+                                                        </span>
+                                                        <span className="text-[11px] text-stone-400 ml-auto shrink-0">
+                                                            {agentStatus.email_failures_7d} failed this week
+                                                        </span>
+                                                    </div>
+                                                    {agentStatus.last_email_failure && (
+                                                        <p className="text-[11px] text-rose-600 leading-relaxed">
+                                                            {agentStatus.last_email_failure}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
+                            </div>
+
                             <div className="bg-white border border-stone-200 rounded-2xl shadow-xs p-4 flex flex-col gap-3">
                                 <h2 className="text-sm font-semibold tracking-tight text-stone-800">
                                     Snippet health

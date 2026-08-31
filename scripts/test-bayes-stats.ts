@@ -8,7 +8,7 @@
 //   3. The honesty test: simulate the agent's daily-check loop on A/A
 //      experiments (false-call rate) and on a real +50% lift (power + speed).
 
-import { compareVariants, probBetaGreater, DECISION_FLOOR } from "../lib/stats.ts";
+import { compareVariants, probBetaGreater, DECISION_FLOOR, HARM_CHANCE, HARM_MIN_EXPOSURES } from "../lib/stats.ts";
 import type { VariantStats } from "../lib/stats.ts";
 
 let failures = 0;
@@ -254,6 +254,70 @@ console.log("\n— Modest +15% lift (5% → 5.75%), same traffic, 60 daily check
         `variant ${r.calledVariant} / control ${r.calledControl} — small lifts SHOULD mostly stay undecided here`
     );
     check("+15% lift: wrong-direction (control) calls rare (<5%)", r.calledControl / sims < 0.05);
+}
+
+// ── Layer 4: the harm gate (circuit breaker) ─────────────────────────────────
+// The evaluator kills a challenger on ANY daily run once both arms have
+// HARM_MIN_EXPOSURES and P(variant beats control) ≤ HARM_CHANCE. A kill is
+// permanent, so the question is: on an A/A test (the variant is exactly as
+// good as control), how often does daily peeking kill it anyway? Simulated
+// with SMALL daily traffic so the early, noisy days are actually peeked at.
+
+function simulateHarmGate(params: {
+    sims: number;
+    days: number;
+    dailyPerArm: number;
+    pControl: number;
+    pVariant: number;
+    minExposures: number;
+}) {
+    const { sims, days, dailyPerArm, pControl, pVariant, minExposures } = params;
+    let killed = 0;
+    const killDays: number[] = [];
+    for (let s = 0; s < sims; s++) {
+        let nC = 0, cC = 0, nV = 0, cV = 0;
+        for (let d = 1; d <= days; d++) {
+            for (let i = 0; i < dailyPerArm; i++) {
+                nC++; if (rand() < pControl) cC++;
+                nV++; if (rand() < pVariant) cV++;
+            }
+            if (Math.min(nC, nV) < minExposures) continue;
+            const cmp = compareVariants(statsOf("c", cC, nC), [statsOf("v", cV, nV)])[0];
+            if (cmp.chanceToBeat <= HARM_CHANCE) { killed++; killDays.push(d); break; }
+        }
+    }
+    killDays.sort((a, b) => a - b);
+    return { killed, median: killDays.length ? killDays[Math.floor(killDays.length / 2)] : null };
+}
+
+console.log(`\n— Harm gate A/A (20% click-goal baseline, 25 visitors/arm/day, 60 daily checks) — gate at ${HARM_MIN_EXPOSURES}/arm —`);
+{
+    const sims = 400;
+    const old = simulateHarmGate({ sims, days: 60, dailyPerArm: 25, pControl: 0.2, pVariant: 0.2, minExposures: 25 });
+    const now = simulateHarmGate({ sims, days: 60, dailyPerArm: 25, pControl: 0.2, pVariant: 0.2, minExposures: HARM_MIN_EXPOSURES });
+    console.log(
+        `false kills with the old 25/arm gate: ${old.killed}/${sims} (${((old.killed / sims) * 100).toFixed(1)}%) — ` +
+        `with ${HARM_MIN_EXPOSURES}/arm: ${now.killed}/${sims} (${((now.killed / sims) * 100).toFixed(1)}%)`
+    );
+    check("harm gate A/A: false kills under 5% across 60 daily peeks", now.killed / sims < 0.05);
+    check("harm gate A/A: strictly fewer false kills than the old 25/arm gate", now.killed <= old.killed);
+}
+
+console.log("\n— Harm gate A/A, 5% signup baseline, 50 visitors/arm/day, 60 daily checks —");
+{
+    const sims = 400;
+    const r = simulateHarmGate({ sims, days: 60, dailyPerArm: 50, pControl: 0.05, pVariant: 0.05, minExposures: HARM_MIN_EXPOSURES });
+    console.log(`false kills: ${r.killed}/${sims} (${((r.killed / sims) * 100).toFixed(1)}%)`);
+    check("harm gate A/A (5% baseline): false kills under 5%", r.killed / sims < 0.05);
+}
+
+console.log("\n— Harm gate on a genuinely BAD variant (20% → 12%, i.e. −40%), 25 visitors/arm/day —");
+{
+    const sims = 400;
+    const r = simulateHarmGate({ sims, days: 60, dailyPerArm: 25, pControl: 0.2, pVariant: 0.12, minExposures: HARM_MIN_EXPOSURES });
+    console.log(`killed: ${r.killed}/${sims} (${((r.killed / sims) * 100).toFixed(1)}%), median day ${r.median}`);
+    check("harm gate: a −40% variant is killed in >85% of runs within 60 days", r.killed / sims > 0.85);
+    check("harm gate: median kill inside 3 weeks", r.median !== null && r.median <= 21);
 }
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} CHECK(S) FAILED.`);

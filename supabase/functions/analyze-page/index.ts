@@ -2,6 +2,11 @@ import "@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "@supabase/supabase-js";
 
 const BROWSERLESS_URL = "https://chrome.browserless.io";
+// Crawl + model call must finish inside the edge runtime's wall-clock budget
+// (150s) with room for the storage upload and DB writes, or the platform kills
+// the function before the error handler can mark the report failed.
+const BROWSERLESS_TIMEOUT_MS = 70_000;
+const CLAUDE_TIMEOUT_MS = 60_000;
 const VIEWPORT = { width: 1440, height: 900 };
 
 // Opus 4.8 by default — the analysis is the founder's first impression of the
@@ -540,8 +545,6 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  const { url, user_id, report_id: incoming_report_id } = await req.json();
-
   const browserlessKey = Deno.env.get('BROWSERLESS_API_KEY')!;
   const anthropicKey   = Deno.env.get('ANTHROPIC_API_KEY')!;
   const supabaseUrl    = Deno.env.get('SUPABASE_URL')!;
@@ -549,14 +552,44 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, supabaseKey);
 
+  // Caller identity comes from the session JWT the dashboard's supabase-js
+  // client attaches automatically — never from the body. This function runs
+  // with the service role (RLS bypassed) and each run costs real money
+  // (Browserless + Claude), so a body-supplied user_id would let anyone with
+  // the public anon key spend on our bill and write into other founders'
+  // dashboards.
+  const bearer = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
+  const { data: authData, error: authError } = bearer
+    ? await supabase.auth.getUser(bearer)
+    : { data: { user: null }, error: new Error('missing token') };
+  if (authError || !authData?.user) {
+    return Response.json({ error: 'Sign in to run an analysis' }, { status: 401, headers: corsHeaders });
+  }
+  const user_id = authData.user.id;
+
+  let body: { url?: string; report_id?: string | number };
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400, headers: corsHeaders });
+  }
+  const { url, report_id: incoming_report_id } = body;
+  if (typeof url !== 'string' || !/^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(url)) {
+    return Response.json({ error: 'A valid http(s) URL is required' }, { status: 400, headers: corsHeaders });
+  }
+
   let report_id = incoming_report_id;
 
   try {
     if (report_id) {
-      // Called from the API route — report row already exists, just update status
-      await supabase.from('reports').update({ status: 'processing' }).eq('id', report_id);
-    } else if (user_id) {
-      // Called directly (e.g. testing) — create the report row ourselves
+      // Re-run against an existing report row — only the owner's.
+      const { data: existing } = await supabase
+        .from('reports').select('id, user_id').eq('id', report_id).maybeSingle();
+      if (!existing || existing.user_id !== user_id) {
+        return Response.json({ error: 'Report not found' }, { status: 404, headers: corsHeaders });
+      }
+      await supabase.from('reports').update({ status: 'processing', error_message: null }).eq('id', report_id);
+    } else {
       const { data, error } = await supabase
         .from('reports')
         .insert({ url, user_id, status: 'processing' })
@@ -568,10 +601,19 @@ Deno.serve(async (req) => {
     }
 
     // ── Step 1: Screenshot + element extraction in one Chrome instance ────────
+    // Hard timeouts on both upstream calls keep the whole run inside the edge
+    // runtime's budget. Without them a hung crawl gets the function killed by
+    // the platform — the catch below never runs and the report row stays
+    // `processing` forever with nothing for the founder to retry.
     const extractRes = await fetch(`${BROWSERLESS_URL}/function?token=${browserlessKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code: EXTRACT_SCRIPT, context: { url } }),
+      signal: AbortSignal.timeout(BROWSERLESS_TIMEOUT_MS),
+    }).catch((e) => {
+      throw new Error(e?.name === 'TimeoutError'
+        ? `The page took too long to load (over ${BROWSERLESS_TIMEOUT_MS / 1000}s). Try again, or check that the URL loads in a normal browser.`
+        : `Could not reach the crawler: ${e?.message ?? e}`);
     });
 
     if (!extractRes.ok) {
@@ -712,10 +754,22 @@ If a comment could apply to any website, delete it.`;
         messages:   [{ role: 'user', content: prompt }],
         output_config: { format: { type: 'json_schema', schema: ANALYSIS_SCHEMA } },
       }),
+      signal: AbortSignal.timeout(CLAUDE_TIMEOUT_MS),
+    }).catch((e) => {
+      throw new Error(e?.name === 'TimeoutError'
+        ? 'The AI analysis timed out. Please try again in a minute.'
+        : `Could not reach the analysis model: ${e?.message ?? e}`);
     });
 
     if (!claudeRes.ok) {
-      throw new Error(`Claude error ${claudeRes.status}: ${await claudeRes.text()}`);
+      const status = claudeRes.status;
+      const text = await claudeRes.text();
+      console.error(`Claude error ${status}: ${text}`);
+      throw new Error(
+        status === 529 || status === 503 ? 'The analysis model is overloaded right now. Please try again in a minute.'
+        : status === 429 ? 'Analysis rate limit reached. Please try again in a minute.'
+        : `The analysis model returned an error (${status}). Please try again.`
+      );
     }
 
     const claudeData = await claudeRes.json();

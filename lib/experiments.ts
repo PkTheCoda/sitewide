@@ -377,6 +377,26 @@ export async function getAgentFeed(user_id: string, limit = 6, offset = 0) {
     return data;
 }
 
+// Agent liveness for the dashboard: last heartbeat + recent email failures.
+// Goes through /api/agent/status because heartbeat rows have no experiment
+// and are invisible to the RLS-scoped feed query above.
+export type AgentStatus = {
+    last_started_at: string | null;
+    last_finished_at: string | null;
+    last_run_error: string | null;
+    last_run_evaluated: number | null;
+    email_failures_7d: number;
+    last_email_failure: string | null;
+};
+export async function getAgentStatus(): Promise<AgentStatus | { error: string }> {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return { error: "no session" };
+    const res = await fetch("/api/agent/status", { headers: { authorization: `Bearer ${token}` } });
+    if (!res.ok) return { error: `status ${res.status}` };
+    return (await res.json()) as AgentStatus;
+}
+
 // 7-day unique visitor / conversion counts across ALL the user's experiments —
 // the dashboard stat tiles. Two head-only count queries; no rows transferred.
 export async function getWeeklyEventCounts(user_id: string) {

@@ -45,6 +45,11 @@
  *      ?sw_optout=1 (your own team). Detected traffic still SEES the variant;
  *      only the counting stops, because serving bots a different page than
  *      humans is cloaking.
+ *   7. Re-runs steps 3–5 on every client-side route change (pushState /
+ *      replaceState / popstate). Single-page apps never reload the document,
+ *      so without this a visitor who lands on / and is routed to /signup
+ *      would never fire the pageview conversion, and one who arrives at
+ *      /pricing via an in-app link would never see that page's variant.
  *
  * Anti-flicker strategy (the important part):
  *   - Target elements stay hidden (visibility:hidden — layout preserved)
@@ -93,9 +98,16 @@
   // One <style> element whose contents we can swap: starts as a whole-page
   // hide on first visit, downgrades to element-only hiding once we know the
   // selectors, and is removed entirely on release.
+  //
+  // Hiding is scoped to a "hide session": the initial page load is session 0,
+  // and every client-side navigation (SPA route change) opens a new one so
+  // the freshly targeted elements can be covered again while their change
+  // lands. A release only applies to the session it was armed for — the
+  // initial failsafe timers can't tear down a later navigation's hide.
   var hideEl = null;
   var released = false;
   var hideMode = null; // "page" (legacy first visit only) | "elements"
+  var hideSession = 0;
   function setHide(cssText, mode) {
     if (released) return;
     hideMode = mode;
@@ -105,23 +117,35 @@
     }
     hideEl.textContent = cssText;
   }
-  function release(reason) {
+  function release(reason, session) {
+    if (session !== undefined && session !== hideSession) return;
     if (released) return;
     released = true;
     if (hideEl && hideEl.parentNode) hideEl.parentNode.removeChild(hideEl);
     hideEl = null;
     dbg("released page (" + reason + ")");
   }
+  function armElementFailsafe() {
+    var session = hideSession;
+    setTimeout(function () {
+      release("2500ms failsafe", session);
+    }, 2500);
+  }
+  function newHideSession() {
+    release("navigation");
+    hideSession++;
+    released = false;
+    hideMode = null;
+    armElementFailsafe();
+  }
   // Two-tier failsafe. A whole-page hide (legacy path, first visit, config
   // still in flight) may never exceed 400ms — a slow fetch can't blank the
   // page. Element-scoped hides keep layout and cover only tested elements,
   // so they get a longer leash for slow mobile hydration.
   setTimeout(function () {
-    if (hideMode === "page") release("400ms first-visit failsafe");
+    if (hideMode === "page") release("400ms first-visit failsafe", 0);
   }, 400);
-  setTimeout(function () {
-    release("2500ms failsafe");
-  }, 2500);
+  armElementFailsafe();
 
   // ── Preview links (?sw_preview=<token>) ───────────────────────────────────
   // The token is base64url({ s: selector, f: fallback, p: payload }), built
@@ -358,16 +382,24 @@
   // moment their target is parsed — usually before it's ever painted.
   // The observer always disconnects (grace after done, hard stop otherwise):
   // no permanent per-mutation querySelector work on chatty apps.
+  // Returns a stop function so a client-side navigation can end the previous
+  // page's loop early: its selectors could otherwise match unrelated elements
+  // on the new page during the grace period.
   function observeAndApply(applyFn) {
     var GRACE_MS = 10000; // survives hydration rewrites after everything applied
     var HARD_STOP_MS = 30000; // absolute cap even if a target never appears
     var graceTimer = null;
+    var stopped = false;
     var observer = new MutationObserver(check);
     function stop(why) {
+      if (stopped) return;
+      stopped = true;
       observer.disconnect();
+      if (graceTimer) clearTimeout(graceTimer);
       dbg("apply loop stopped (" + why + ")");
     }
     function check() {
+      if (stopped) return;
       if (!applyFn() || graceTimer) return;
       graceTimer = setTimeout(function () {
         stop("done + grace period over");
@@ -382,6 +414,7 @@
     setTimeout(function () {
       if (!graceTimer) stop("hard stop — some targets never appeared");
     }, HARD_STOP_MS);
+    return stop;
   }
 
   // ── Event reporting ───────────────────────────────────────────────────────
@@ -465,8 +498,52 @@
     return selectors.length ? selectors.join(",") + "{visibility:hidden !important}" : "";
   }
 
-  // ── Core: act on a config (apply changes, wire goals, fire events) ───────
-  function run(config) {
+  // ── Session state (survives client-side navigations) ─────────────────────
+  // Single-page apps (Next/React/Vue routers) never reload the document: a
+  // visitor lands on /, clicks "Pricing", and the URL becomes /pricing with
+  // no new page load. Everything below is therefore split into work that
+  // happens ONCE per document (click-goal listeners) and work that happens
+  // on EVERY page — the initial load and each route change (evaluatePage).
+  var CURRENT_CONFIG = null;
+  var sentKeys = {}; // "expId:eventType" → true; avoids re-sending on every nav
+  var clickBound = {}; // expId → true; one document listener per experiment
+  var activeStops = []; // stop fns for the current page's apply loops
+  var lastPath = null;
+
+  function sendOnce(exp, variant, eventType) {
+    var key = exp.id + ":" + eventType;
+    if (sentKeys[key]) return;
+    sentKeys[key] = true;
+    sendEvent(exp.id, variant.id, eventType);
+  }
+
+  // Click goal: one capture-phase listener per experiment for the document's
+  // lifetime; works on late-rendered elements. Page and variant are checked
+  // at CLICK time, so the listener stays correct across route changes and
+  // only counts clicks on the experiment's own page (a path-style selector
+  // like `main > a:nth-of-type(2)` can match an unrelated link elsewhere).
+  function bindClickGoal(exp) {
+    if (clickBound[exp.id] || exp.goal_type !== "click" || !exp.goal_selector) return;
+    clickBound[exp.id] = true;
+    document.addEventListener(
+      "click",
+      function (e) {
+        try {
+          if (!pathMatches(exp.page_path)) return;
+          if (!(e.target && e.target.closest && e.target.closest(exp.goal_selector))) return;
+          var variant = pickVariant(exp);
+          if (variant.killed) return;
+          sendOnce(exp, variant, "conversion");
+        } catch (err) {
+          /* bad selector — ignore */
+        }
+      },
+      true
+    );
+  }
+
+  // ── Core: act on the current page (apply changes, fire events) ───────────
+  function evaluatePage(config) {
     var experiments = (config && config.experiments) || [];
     var pending = []; // { exp, payload, applied } — applied flips on first success
 
@@ -506,6 +583,8 @@
         "(" + variant.id.slice(0, 8) + "…)"
       );
 
+      bindClickGoal(exp);
+
       // On the experiment page: apply the change, count the exposure.
       // (If this config came from a stale cache and the experiment was
       // paused meanwhile, the server rejects the events — data stays clean.)
@@ -513,24 +592,7 @@
         if (variant.payload) {
           pending.push({ exp: exp, variant: variant, payload: variant.payload, applied: false });
         }
-        sendEvent(exp.id, variant.id, "exposure");
-
-        // Click goal: capture-phase listener, works on late-rendered elements.
-        if (exp.goal_type === "click" && exp.goal_selector) {
-          document.addEventListener(
-            "click",
-            function (e) {
-              try {
-                if (e.target && e.target.closest && e.target.closest(exp.goal_selector)) {
-                  sendEvent(exp.id, variant.id, "conversion");
-                }
-              } catch (err) {
-                /* bad selector — ignore */
-              }
-            },
-            true
-          );
-        }
+        sendOnce(exp, variant, "exposure");
       }
 
       // Pageview goal: the conversion page is usually NOT the experiment
@@ -538,7 +600,7 @@
       // no stored state. The server only counts it if this visitor also has
       // an exposure row.
       if (exp.goal_type === "pageview" && pathMatches(exp.goal_page_path)) {
-        sendEvent(exp.id, variant.id, "conversion");
+        sendOnce(exp, variant, "conversion");
       }
     });
 
@@ -558,20 +620,26 @@
     // exposure. Report it so the agent can pause the experiment instead of
     // letting it collect garbage. 8s is far beyond slow-device hydration but
     // before the 30s hard stop; the server dedupes per visitor, and the agent
-    // requires several distinct visitors before pausing anything.
+    // requires several distinct visitors before pausing anything. A visitor
+    // who navigated away before 8s is not a miss — the page simply changed.
+    var pagePath = location.pathname;
     setTimeout(function () {
+      if (location.pathname !== pagePath) return;
       pending.forEach(function (item) {
         if (!item.applied && item.exp.status === "running") {
           dbg("selector miss:", item.exp.selector);
-          sendEvent(item.exp.id, item.variant.id, "selector_miss");
+          sendOnce(item.exp, item.variant, "selector_miss");
         }
       });
     }, 8000);
 
     // Returns true when every pending change has been applied at least once.
+    // Re-checks the path per item: a stale loop (SPA navigation mid-grace)
+    // must never patch a same-shaped element on a different page.
     function applyAll() {
       var allApplied = true;
       pending.forEach(function (item) {
+        if (!pathMatches(item.exp.page_path)) return;
         var el = findElement(item.exp.selector, item.exp.selector_fallback);
         if (el) {
           applyPayload(el, item.payload);
@@ -588,12 +656,58 @@
     // Apply as elements appear (even mid-parse); only release the hide once
     // everything is actually applied (or a failsafe fires) — releasing
     // earlier would flash the original content.
-    observeAndApply(function () {
-      var done = applyAll();
-      if (done && !released) release("all changes applied");
-      return done;
+    activeStops.push(
+      observeAndApply(function () {
+        var done = applyAll();
+        if (done && !released) release("all changes applied");
+        return done;
+      })
+    );
+  }
+
+  function run(config) {
+    CURRENT_CONFIG = config;
+    lastPath = location.pathname;
+    evaluatePage(config);
+  }
+
+  // ── Client-side navigation (SPA route changes) ───────────────────────────
+  // history.pushState/replaceState fire no event, so both are wrapped; the
+  // browser's own back/forward fires popstate. Only an actual path change
+  // re-evaluates — Next.js calls replaceState on scroll with the same URL.
+  // The check is deferred one tick so the router has swapped the DOM (or at
+  // least begun to; the MutationObserver in the apply loop covers the rest).
+  function onNavigate() {
+    if (!CURRENT_CONFIG) return;
+    var path = location.pathname;
+    if (path === lastPath) return;
+    lastPath = path;
+    dbg("navigation →", path);
+    activeStops.forEach(function (stop) {
+      stop("navigation");
+    });
+    activeStops = [];
+    newHideSession();
+    evaluatePage(CURRENT_CONFIG);
+  }
+  function hookHistory() {
+    var h = window.history;
+    if (!h || h.__sw_hooked) return;
+    h.__sw_hooked = true;
+    ["pushState", "replaceState"].forEach(function (name) {
+      var orig = h[name];
+      if (typeof orig !== "function") return;
+      h[name] = function () {
+        var result = orig.apply(this, arguments);
+        setTimeout(onNavigate, 0);
+        return result;
+      };
+    });
+    window.addEventListener("popstate", function () {
+      setTimeout(onNavigate, 0);
     });
   }
+  hookHistory();
 
   // ── Main ─────────────────────────────────────────────────────────────────
   if (EMBED && EMBED.config) {

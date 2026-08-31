@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { compareVariants, DECISION_FLOOR, VariantStats } from "@/lib/stats";
+import { compareVariants, DECISION_FLOOR, HARM_CHANCE, HARM_MIN_EXPOSURES, VariantStats } from "@/lib/stats";
 import { proposeNextExperiment } from "@/lib/propose";
 import { sendDecisionEmail, sendWeeklyDigests } from "@/lib/agentEmails";
 
@@ -36,10 +36,8 @@ export const maxDuration = 60;
 // (default DECISION_FLOOR) keeping tiny-n flukes out, not a power-analysis
 // commitment.
 
-// Circuit breaker: a challenger this confidently below control gets killed on
-// any run, before the floor. HARM_MIN_EXPOSURES keeps tiny-n flukes out.
-const HARM_CHANCE = 0.01; // P(variant beats control) at or below this = harmful
-const HARM_MIN_EXPOSURES = 25;
+// Circuit breaker thresholds (HARM_CHANCE / HARM_MIN_EXPOSURES) live in
+// lib/stats.ts next to the decision rule so the simulation can test them.
 
 // Health check: pause the experiment when this many unique visitors reported
 // the target element missing AND they are a meaningful share of the variant's

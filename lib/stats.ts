@@ -56,6 +56,16 @@ export const DECISION_MAX_RISK = 0.0005;
 // never needs founder input. Saved as the experiment's min_sample_size.
 export const DECISION_FLOOR = 500;
 
+// Circuit breaker (the harm gate, checked by the evaluator on EVERY run,
+// before the floor): a challenger whose chance of beating control is at or
+// below HARM_CHANCE is killed on the spot, because every day it runs costs
+// real conversions. Kills are irreversible, so the exposure bar is what keeps
+// a day-one fluke (0/25 vs 5/25 on a click goal) from ending a variant that
+// was fine — verified by the harm-gate A/A simulation in
+// scripts/test-bayes-stats.ts, which is why this is 150 and not 25.
+export const HARM_CHANCE = 0.01;
+export const HARM_MIN_EXPOSURES = 150;
+
 // ─── Beta-distribution machinery ─────────────────────────────────────────────
 
 // Lanczos ln Γ(z) (g=7, n=9) — |error| < 1e-13 over our domain.

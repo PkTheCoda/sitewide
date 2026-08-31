@@ -2,6 +2,7 @@ import { readFileSync } from "fs";
 import path from "path";
 import { buildSnippetConfig } from "@/lib/snippetConfig";
 import { BOT_UA_PATTERN } from "@/lib/botFilter";
+import { requesterHost } from "@/lib/snippetGuards";
 
 // The one-line install: <script src="https://…/api/snippet/js/SITE_ID"></script>
 // placed synchronously in the <head>. Serves snippet.js with the site's config
@@ -25,7 +26,7 @@ function getSnippetSource(): string {
 }
 
 export async function GET(
-    _request: Request,
+    request: Request,
     { params }: { params: Promise<{ siteId: string }> }
 ) {
     // Tolerate a ".js" suffix so the install line can read naturally either way.
@@ -39,7 +40,9 @@ export async function GET(
     }
 
     try {
-        const config = await buildSnippetConfig(siteId);
+        // The Referer names the page that embedded the tag — it gates the
+        // "snippet installed" heartbeat, not the config (see snippetConfig.ts).
+        const config = await buildSnippetConfig(siteId, requesterHost(request));
         // "</script" can never appear in this JSON (it's JSON.stringify output of
         // our own DB rows), but escape "<" anyway — this string is inert data, and
         // escaping makes injection through experiment copy structurally impossible.

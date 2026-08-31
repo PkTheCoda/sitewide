@@ -211,5 +211,121 @@ const baseExp = {
   check("?sw_optout=0 re-enables tracking", cleared.length === 1, JSON.stringify(cleared));
 }
 
+// ── 5. SPA navigation ────────────────────────────────────────────────────────
+// PLG SaaS sites are Next/React routers: the document loads once and every
+// link is a pushState. Exposure, variant apply, pageview conversions and
+// click goals must all track the CURRENT path, not the one at load time.
+{
+  const variants = [
+    { id: "v-control", is_control: true, payload: null, weight: 0 },
+    { id: "v-b", is_control: false, payload: { text: "NEW HEADLINE" }, weight: 100, killed: false },
+  ];
+  const HTML = `<div id="app"><h1 id="headline">Original</h1><button id="cta">Go</button></div>`;
+  const tick = (ms = 50) => new Promise((r) => setTimeout(r, ms));
+
+  // 5a. land on an unrelated page, route INTO the experiment page
+  {
+    const config = { experiments: [{ ...baseExp, variants }] };
+    const { window, events } = boot(config, HTML, { url: "http://site.test/blog" });
+    await tick();
+    check("spa: no exposure off-page", events.length === 0, JSON.stringify(events));
+    check("spa: original untouched off-page", window.document.querySelector("#headline").textContent === "Original");
+    window.history.pushState({}, "", "/page");
+    await tick();
+    check("spa: exposure after pushState onto experiment page", events.filter((e) => e.event_type === "exposure").length === 1, JSON.stringify(events));
+    check("spa: variant applied after pushState", window.document.querySelector("#headline").textContent === "NEW HEADLINE");
+    // element re-rendered by the router after nav → observer re-applies
+    window.document.querySelector("#headline").textContent = "Original";
+    await tick();
+    check("spa: re-applied after router rewrite", window.document.querySelector("#headline").textContent === "NEW HEADLINE");
+    // same-path replaceState (Next does this on scroll) must not re-send
+    window.history.replaceState({}, "", "/page?x=1");
+    await tick();
+    check("spa: same-path replaceState sends nothing new", events.length === 1, JSON.stringify(events));
+  }
+
+  // 5b. pageview goal reached via client-side navigation
+  {
+    const config = {
+      experiments: [{ ...baseExp, goal_type: "pageview", goal_selector: null, goal_page_path: "/thanks", variants }],
+    };
+    const { window, events } = boot(config, HTML);
+    await tick();
+    check("spa pageview: exposure on load", events.filter((e) => e.event_type === "exposure").length === 1);
+    window.history.pushState({}, "", "/thanks");
+    await tick();
+    const conv = events.filter((e) => e.event_type === "conversion");
+    check("spa pageview: conversion after pushState to goal path", conv.length === 1 && conv[0].variant_id === "v-b", JSON.stringify(events));
+    window.history.back();
+    await tick(100);
+    window.history.pushState({}, "", "/thanks/");
+    await tick();
+    check("spa pageview: conversion not re-sent on revisit (trailing slash)", events.filter((e) => e.event_type === "conversion").length === 1, JSON.stringify(events));
+  }
+
+  // 5c. click goal: listener bound once, checks page at click time
+  {
+    const config = { experiments: [{ ...baseExp, variants }] };
+    const { window, events } = boot(config, HTML, { url: "http://site.test/blog" });
+    await tick();
+    const click = () => window.document.querySelector("#cta").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    click();
+    await tick();
+    check("spa click: no conversion off-page", events.filter((e) => e.event_type === "conversion").length === 0, JSON.stringify(events));
+    window.history.pushState({}, "", "/page");
+    await tick();
+    window.history.pushState({}, "", "/blog");
+    await tick();
+    window.history.pushState({}, "", "/page");
+    await tick();
+    click();
+    click();
+    await tick();
+    check("spa click: exactly one conversion after 3 navs + 2 clicks", events.filter((e) => e.event_type === "conversion").length === 1, JSON.stringify(events));
+    check("spa click: exactly one exposure across repeated visits", events.filter((e) => e.event_type === "exposure").length === 1, JSON.stringify(events));
+  }
+
+  // 5d. stale apply loop must not patch a same-shaped element on the next page
+  {
+    const config = { experiments: [{ ...baseExp, selector: "#app > h1", variants }] };
+    const { window, events } = boot(config, HTML);
+    await tick();
+    check("spa leak: applied on experiment page", window.document.querySelector("#app > h1").textContent === "NEW HEADLINE");
+    window.history.pushState({}, "", "/pricing");
+    await tick();
+    // router swaps the content; the new page has its own h1 at the same selector
+    window.document.querySelector("#app").innerHTML = `<h1>Pricing</h1>`;
+    await tick(100);
+    check("spa leak: other page's h1 untouched", window.document.querySelector("#app > h1").textContent === "Pricing");
+    check("spa leak: still one exposure", events.filter((e) => e.event_type === "exposure").length === 1);
+  }
+
+  // 5e. navigating away before 8s is not a selector miss; arriving late is
+  {
+    const config = { experiments: [{ ...baseExp, selector: "#nope", variants }] };
+    const { window, events } = boot(config, HTML);
+    await tick();
+    window.history.pushState({}, "", "/blog");
+    await new Promise((r) => setTimeout(r, 8200));
+    check("spa miss: no selector_miss after navigating away", !events.some((e) => e.event_type === "selector_miss"), JSON.stringify(events));
+  }
+
+  // 5f. popstate (back button) into the experiment page
+  {
+    const config = { experiments: [{ ...baseExp, variants }] };
+    const { window, events } = boot(config, HTML, { url: "http://site.test/blog" });
+    await tick();
+    window.history.pushState({}, "", "/page");
+    await tick();
+    window.document.querySelector("#headline").textContent = "Original";
+    window.history.pushState({}, "", "/blog");
+    await tick();
+    window.history.back();
+    await tick(100);
+    check("spa popstate: variant re-applied on back", window.document.querySelector("#headline").textContent === "NEW HEADLINE");
+    check("spa popstate: still one exposure", events.filter((e) => e.event_type === "exposure").length === 1);
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
